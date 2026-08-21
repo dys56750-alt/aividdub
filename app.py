@@ -10,6 +10,7 @@ import urllib3
 from pydub import AudioSegment
 import yt_dlp
 from google import genai
+from google.genai import types
 
 # Setup SSL & Warnings
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -81,7 +82,7 @@ st.title("🎬 Khmer Dubbing Studio Pro")
 # Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ (លឿនបំផុត ២ វិនាទី)")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
@@ -288,20 +289,34 @@ if os.path.exists(video_input_path):
                         st_box.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់គ្រប់វិនាទី & បកប្រែពេញលេញ...")
                         client = genai.Client(api_key=gemini_key.strip())
                         audio_file = client.files.upload(file=extracted_mp3_path)
-                        prompt = (
-                            "You are an expert full-movie dubbing and translation assistant.\n"
-                            "Task:\n"
-                            "1. Listen to the entire audio file from 00:00:00 to the very end.\n"
-                            "2. Transcribe and translate EVERY dialogue sentence into natural spoken Khmer.\n"
-                            "3. Tag [ប្រុស] at start of line for Male voice, or [ស្រី] for Female voice.\n"
-                            "4. Ensure full unbroken coverage. Do NOT skip any conversation, background speech, or scenes.\n"
-                            "5. Output STRICTLY in valid SubRip (.srt) format without Markdown blocks."
+                        
+                        system_instruction = (
+                            "You are an automated SRT subtitle generator and translator. "
+                            "You must ONLY output valid SubRip (.srt) subtitle format. "
+                            "NEVER include original language text, speaker names (e.g. 'Tyler:'), character breakdowns, descriptions, or markdown formatting. "
+                            "Each subtitle block must contain ONLY the sequential number, timecode line (00:00:00,000 --> 00:00:00,000), and the translated Khmer dialogue prefixed with either [ប្រុស] or [ស្រី]."
                         )
+                        
+                        prompt = (
+                            "Listen to the ENTIRE audio file from start to finish.\n"
+                            "Transcribe and translate all speech into natural spoken Khmer.\n"
+                            "Strict Rules:\n"
+                            "1. Tag [ប្រុស] for male voices or [ស្រី] for female voices at the start of each dialogue line.\n"
+                            "2. Do NOT write original English/foreign text or character names.\n"
+                            "3. Do NOT skip any scene or quiet voices.\n"
+                            "4. Return STRICTLY raw SRT text."
+                        )
+                        
                         response = client.models.generate_content(
                             model='gemini-3.6-flash',
                             contents=[audio_file, prompt],
-                            config={'temperature': 0.0, 'max_output_tokens': 8192}
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_instruction,
+                                temperature=0.0,
+                                max_output_tokens=8192
+                            )
                         )
+                        
                         res_text = response.text.replace("```srt", "").replace("```", "").strip()
                         with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
                             f.write(res_text)
@@ -372,8 +387,8 @@ if os.path.exists(raw_khmer_audio):
 
 st.divider()
 
-# 5. Step 2: Ultra-Fast Render (2 to 3 Seconds Max)
-st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង")
+# 5. Step 2: Ultra-Fast Render
+st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង (លឿនបំផុត ២ វិនាទី)")
 
 if st.button("🚀 Render Video + Audio Only", type="primary", use_container_width=True):
     if not os.path.exists(video_input_path):
@@ -384,7 +399,6 @@ if st.button("🚀 Render Video + Audio Only", type="primary", use_container_wid
         status_box = st.empty()
         status_box.info("⏳ កំពុង Merge សំឡេងចូលវីដេអូ...")
         
-        # FFmpeg Ultra-Fast Stream Copy (មិន Encode ឡើងវិញ ដំណើរការត្រឹម ២ វិនាទី)
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-i", video_input_path,
