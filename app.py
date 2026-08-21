@@ -10,7 +10,6 @@ import urllib3
 from pydub import AudioSegment
 import yt_dlp
 from google import genai
-from google.genai import types
 
 # Setup SSL & Warnings
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -82,13 +81,13 @@ st.title("🎬 Khmer Dubbing Studio Pro")
 # Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
     if st.button("🗑️ Reset All", type="secondary", use_container_width=True):
         hard_reset_all()
-        st.success("✅ បានសម្អាតទំហំផ្ទុកជោគជ័យ!")
+        st.success("✅ បានសម្អាតរួចរាល់!")
         st.rerun()
 
 st.divider()
@@ -275,10 +274,10 @@ if os.path.exists(video_input_path):
                 st.error("❌ សូមបញ្ចូល Gemini API Key!")
             else:
                 st_box = st.empty()
-                st_box.info("⏳ កំពុងទាញយកសំឡេងច្បាស់ដើម...")
+                st_box.info("⏳ កំពុងបន្សុទ្ធសំឡេងដូច Termux (Vocal Clean 16kHz)...")
                 subprocess.run([
                     "ffmpeg", "-y", "-i", video_input_path,
-                    "-vn", "-ar", "24000", "-ac", "1", "-b:a", "128k",
+                    "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k",
                     extracted_mp3_path
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
@@ -286,41 +285,30 @@ if os.path.exists(video_input_path):
                     st_box.error("❌ មិនអាចទាញយកសំឡេងបានទេ!")
                 else:
                     try:
-                        st_box.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់គ្រប់វិនាទី & បកប្រែពេញលេញ...")
+                        st_box.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់គ្រប់វិនាទី & បកប្រែ...")
                         client = genai.Client(api_key=gemini_key.strip())
                         audio_file = client.files.upload(file=extracted_mp3_path)
                         
-                        system_instruction = (
-                            "You are an automated SRT subtitle generator and translator. "
-                            "You must ONLY output valid SubRip (.srt) subtitle format. "
-                            "NEVER include original language text, speaker names (e.g. 'Tyler:'), character breakdowns, descriptions, or markdown formatting. "
-                            "Each subtitle block must contain ONLY the sequential number, timecode line (00:00:00,000 --> 00:00:00,000), and the translated Khmer dialogue prefixed with either [ប្រុស] or [ស្រី]."
-                        )
-                        
                         prompt = (
-                            "Listen to the ENTIRE audio file from start to finish.\n"
-                            "Transcribe and translate all speech into natural spoken Khmer.\n"
-                            "Strict Rules:\n"
-                            "1. Tag [ប្រុស] for male voices or [ស្រី] for female voices at the start of each dialogue line.\n"
-                            "2. Do NOT write original English/foreign text or character names.\n"
-                            "3. Do NOT skip any scene or quiet voices.\n"
-                            "4. Return STRICTLY raw SRT text."
+                            "You are a professional movie subtitle translator.\n"
+                            "Task: Listen to the ENTIRE audio file completely from start to end.\n"
+                            "Rules:\n"
+                            "1. Transcribe and translate EVERY single dialogue directly into natural Khmer spoken language.\n"
+                            "2. Prefix every dialogue line with '[ប្រុស]' (Male) or '[ស្រី]' (Female).\n"
+                            "3. Maintain 100% full coverage without skipping any scene, conversation, or background talk.\n"
+                            "4. Return STRICTLY raw SubRip (.srt) subtitle format. DO NOT output markdown, English explanations, or character names."
                         )
                         
                         response = client.models.generate_content(
                             model='gemini-3.6-flash',
                             contents=[audio_file, prompt],
-                            config=types.GenerateContentConfig(
-                                system_instruction=system_instruction,
-                                temperature=0.0,
-                                max_output_tokens=8192
-                            )
+                            config={'temperature': 0.1, 'max_output_tokens': 8192}
                         )
                         
                         res_text = response.text.replace("```srt", "").replace("```", "").strip()
                         with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
                             f.write(res_text)
-                        st_box.success("🎉 Gemini 3.6 Flash បានស្ដាប់ & បកប្រែរួចរាល់ពេញលេញ!")
+                        st_box.success("🎉 Gemini 3.6 Flash បានបកប្រែរួចរាល់ពេញលេញ!")
                         st.rerun()
                     except Exception as e: 
                         st_box.error(f"❌ កំហុស Gemini៖ {e}")
@@ -387,8 +375,8 @@ if os.path.exists(raw_khmer_audio):
 
 st.divider()
 
-# 5. Step 2: Ultra-Fast Render
-st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង (លឿនបំផុត ២ វិនាទី)")
+# 5. Step 2: Super Fast Render
+st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង")
 
 if st.button("🚀 Render Video + Audio Only", type="primary", use_container_width=True):
     if not os.path.exists(video_input_path):
