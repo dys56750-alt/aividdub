@@ -78,21 +78,19 @@ def hard_reset_all():
 
 st.title("🎬 Khmer Dubbing Studio Pro")
 
-# Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render")
 with col_reset:
     used_mb = get_dir_size_mb()
-    st.metric(label="💾 ទំហំផ្ទុកប្រើប្រាស់ (Disk Usage)", value=f"{used_mb:.1f} MB")
-    if st.button("🗑️ សម្អាត Storage ទាំងអស់ (Reset)", type="secondary", use_container_width=True):
+    st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
+    if st.button("🗑️ Reset All", type="secondary", use_container_width=True):
         hard_reset_all()
-        st.success("✅ បានសម្អាតទំហំផ្ទុកជោគជ័យ!")
+        st.success("✅ បានសម្អាតរួចរាល់!")
         st.rerun()
 
 st.divider()
 
-# 1. API Key
 st.subheader("🔑 ១. បញ្ចូល Gemini API Key")
 gemini_key = st.text_input("🔑 Gemini API Key:", type="password", value="")
 
@@ -108,13 +106,6 @@ def has_audio_stream(file_path):
     except Exception:
         return False
 
-def resolve_redirect_url(url):
-    try:
-        res = requests.head(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-        return res.url
-    except Exception:
-        return url
-
 def download_video_all(url, out_path):
     url = url.strip()
     for f in [out_path, "t_raw_vid.mp4", "t_raw_aud.mp3"]:
@@ -122,19 +113,49 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # 1. សម្រាប់ TikTok (ដោះស្រាយ Short link vt.tiktok.com ➔ TikWM API)
+    ydl_opts = {
+        'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
+        'outtmpl': out_path,
+        'nocheckcertificate': True,
+        'quiet': True,
+        'no_warnings': True,
+        'merge_output_format': 'mp4',
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+        'extractor_args': {
+            'youtube': {'player_client': ['android', 'ios', 'web']},
+            'tiktok': {'api_hostname': 'api22-normal-c-useast2a.tiktokv.com'}
+        }
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+            return True, "ជោគជ័យ"
+    except Exception:
+        pass
+
     if "tiktok.com" in url.lower():
-        resolved_url = resolve_redirect_url(url)
         try:
+            res_expand = requests.head(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            real_url = res_expand.url
+
             api_url = "https://www.tikwm.com/api/"
+            payload = {'url': real_url, 'web': 1}
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            res = requests.post(api_url, headers=headers, data={'url': resolved_url, 'web': 1}, verify=False, timeout=15).json()
+            
+            res = requests.post(api_url, headers=headers, data=payload, verify=False, timeout=15).json()
             if res.get("code") == 0 and "data" in res:
                 v_url = res["data"].get("play") or res["data"].get("wmplay")
                 m_url = res["data"].get("music")
                 t_vid, t_aud = "t_raw_vid.mp4", "t_raw_aud.mp3"
+                
                 rv = requests.get(v_url, headers=headers, verify=False, timeout=30)
                 with open(t_vid, "wb") as f: f.write(rv.content)
+                
                 if m_url:
                     ra = requests.get(m_url, headers=headers, verify=False, timeout=20)
                     with open(t_aud, "wb") as f: f.write(ra.content)
@@ -144,51 +165,13 @@ def download_video_all(url, out_path):
                     if os.path.exists(out_path): os.remove(out_path)
                     os.rename(t_vid, out_path)
                 if os.path.exists(t_vid): os.remove(t_vid)
-                if os.path.exists(out_path) and has_audio_stream(out_path):
-                    return True, "ជោគជ័យតាម TikWM"
-        except Exception:
-            pass
-
-    # 2. សម្រាប់ YouTube (Bypass Bot Block ដោយប្រើ iOS/Android Clients)
-    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        clients = [['ios'], ['android'], ['mweb']]
-        for c in clients:
-            try:
-                ydl_opts = {
-                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                    'outtmpl': out_path,
-                    'nocheckcertificate': True,
-                    'quiet': True,
-                    'no_warnings': True,
-                    'extractor_args': {'youtube': {'player_client': c}},
-                    'merge_output_format': 'mp4'
-                }
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
                 if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-                    return True, "ជោគជ័យ"
-            except Exception:
-                continue
+                    return True, "ជោគជ័យតាម TikWM"
+        except Exception as e:
+            return False, f"កំហុសទាញយក៖ {e}"
 
-    # 3. សម្រាប់ Dailymotion, Facebook និងវេបសាយទូទៅ
-    try:
-        ydl_opts = {
-            'outtmpl': out_path,
-            'nocheckcertificate': True,
-            'quiet': True,
-            'no_warnings': True,
-            'merge_output_format': 'mp4'
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-            return True, "ជោគជ័យ"
-    except Exception as e:
-        return False, f"កំហុសទាញយក៖ {e}"
+    return False, "មិនអាចទាញយកបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4"
 
-    return False, "មិនអាចទាញយកបានទេ សូមជ្រើសរើសជម្រើស Upload File MP4 ជំនួសវិញ។"
-
-# --- Gemini Logic ---
 def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
     client = genai.Client(api_key=api_key)
     uploaded_audio = client.files.upload(file=audio_path)
