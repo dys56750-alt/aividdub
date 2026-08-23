@@ -81,7 +81,7 @@ st.title("🎬 Khmer Dubbing Studio Pro")
 # Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
@@ -159,6 +159,46 @@ def download_video_all(url, out_path):
 
     return False, "មិនអាចទាញយកបានទេ សូម Upload File MP4 ជំនួសវិញ"
 
+# --- Classic Project Gemini Logic ---
+def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
+    client = genai.Client(api_key=api_key)
+    uploaded_audio = client.files.upload(file=audio_path)
+
+    prompt = r"""
+Listen to the audio and create a valid SRT for dubbing into Khmer.
+
+Strict Rules:
+1. Transcribe speech accurately and translate naturally into Khmer.
+2. Accurately detect speaker gender for each subtitle line.
+3. Every subtitle line MUST start with exactly one tag:
+   (female) = for female voice
+   (man) = for male voice
+4. Return ONLY valid SRT format. Do not add markdown blocks (no ```srt), explanations, or notes.
+
+Example Format:
+1
+00:00:01,000 --> 00:00:03,500
+(female) សួស្តី! តើអ្នកសុខសប្បាយទេ?
+
+2
+00:00:03,600 --> 00:00:05,200
+(man) បាទ ខ្ញុំសុខសប្បាយទេ។
+"""
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[prompt, uploaded_audio],
+    )
+
+    try:
+        client.files.delete(name=uploaded_audio.name)
+    except Exception:
+        pass
+
+    raw_text = getattr(response, "text", "").strip()
+    cleaned_srt = re.sub(r"^\s*```(?:srt|text)?\s*", "", raw_text, flags=re.I)
+    cleaned_srt = re.sub(r"\s*```\s*$", "", cleaned_srt).strip()
+    return cleaned_srt
+
 def parse_time_to_ms(t):
     t = t.replace(',', '.').strip()
     p = t.split(':')
@@ -199,8 +239,10 @@ def parse_srt(srt_text, mode):
                 sp = " ".join(curr_text).strip()
                 v = "km-KH-PisethNeural"
                 if "🤖" in mode or "អូតូ" in mode:
-                    if any(k in sp.lower() for k in ["ស្រី", "female", "(f)", "[f]", "woman"]): v = "km-KH-SreymomNeural"
-                elif "👩" in mode: v = "km-KH-SreymomNeural"
+                    if any(k in sp.lower() for k in ["ស្រី", "female", "(female)", "[ស្រី]", "woman", "(f)"]): 
+                        v = "km-KH-SreymomNeural"
+                elif "👩" in mode: 
+                    v = "km-KH-SreymomNeural"
                 cl = clean_speech_text(sp)
                 if cl: items.append({"start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v})
             curr_start, curr_end = m.group(1), m.group(2)
@@ -212,8 +254,10 @@ def parse_srt(srt_text, mode):
         sp = " ".join(curr_text).strip()
         v = "km-KH-PisethNeural"
         if "🤖" in mode or "អូតូ" in mode:
-            if any(k in sp.lower() for k in ["ស្រី", "female", "(f)", "[f]", "woman"]): v = "km-KH-SreymomNeural"
-        elif "👩" in mode: v = "km-KH-SreymomNeural"
+            if any(k in sp.lower() for k in ["ស្រី", "female", "(female)", "[ស្រី]", "woman", "(f)"]): 
+                v = "km-KH-SreymomNeural"
+        elif "👩" in mode: 
+            v = "km-KH-SreymomNeural"
         cl = clean_speech_text(sp)
         if cl: items.append({"start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v})
     return items
@@ -238,7 +282,7 @@ st.subheader("📥 ២. ប្រភពវីដេអូដើម")
 input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវីដេអូ៖", ["🔗 URL Link (Dailymotion/TikTok/FB/YouTube)", "📂 Upload File MP4"], key="v_opt")
 
 if input_opt == "🔗 URL Link (Dailymotion/TikTok/FB/YouTube)":
-    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="https://www.dailymotion.com/video/...")
+    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://www.dailymotion.com/video/](https://www.dailymotion.com/video/)...")
     if st.button("📥 ទាញយកវីដេអូដើម", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
@@ -274,7 +318,7 @@ if os.path.exists(video_input_path):
                 st.error("❌ សូមបញ្ចូល Gemini API Key!")
             else:
                 st_box = st.empty()
-                st_box.info("⏳ កំពុងបន្សុទ្ធសំឡេងដូច Termux (Vocal Clean 16kHz)...")
+                st_box.info("⏳ កំពុងបន្សុទ្ធសំឡេង (16kHz Mono)...")
                 subprocess.run([
                     "ffmpeg", "-y", "-i", video_input_path,
                     "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k",
@@ -285,29 +329,10 @@ if os.path.exists(video_input_path):
                     st_box.error("❌ មិនអាចទាញយកសំឡេងបានទេ!")
                 else:
                     try:
-                        st_box.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់គ្រប់វិនាទី & បកប្រែ...")
-                        client = genai.Client(api_key=gemini_key.strip())
-                        audio_file = client.files.upload(file=extracted_mp3_path)
-                        
-                        prompt = (
-                            "You are a professional movie subtitle translator.\n"
-                            "Task: Listen to the ENTIRE audio file completely from start to end.\n"
-                            "Rules:\n"
-                            "1. Transcribe and translate EVERY single dialogue directly into natural Khmer spoken language.\n"
-                            "2. Prefix every dialogue line with '[ប្រុស]' (Male) or '[ស្រី]' (Female).\n"
-                            "3. Maintain 100% full coverage without skipping any scene, conversation, or background talk.\n"
-                            "4. Return STRICTLY raw SubRip (.srt) subtitle format. DO NOT output markdown, English explanations, or character names."
-                        )
-                        
-                        response = client.models.generate_content(
-                            model='gemini-3.6-flash',
-                            contents=[audio_file, prompt],
-                            config={'temperature': 0.1, 'max_output_tokens': 8192}
-                        )
-                        
-                        res_text = response.text.replace("```srt", "").replace("```", "").strip()
+                        st_box.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរ...")
+                        srt_output = generate_khmer_dub_srt(extracted_mp3_path, gemini_key.strip())
                         with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
-                            f.write(res_text)
+                            f.write(srt_output)
                         st_box.success("🎉 Gemini 3.6 Flash បានបកប្រែរួចរាល់ពេញលេញ!")
                         st.rerun()
                     except Exception as e: 
@@ -318,7 +343,7 @@ st.divider()
 # 3. Script Editor
 st.subheader("📝 ៣. អត្ថបទ Script SRT ខ្មែរ")
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
-user_script = st.text_area("Script SRT ខ្មែរ (គាំទ្រ Tag [ប្រុស]/[ស្រី]):", value=cur_script, height=250)
+user_script = st.text_area("Script SRT ខ្មែរ (គាំទ្រ Tag (female)/(man) ឬ [ប្រុស]/[ស្រី]):", value=cur_script, height=250)
 if user_script != cur_script:
     with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
         f.write(user_script)
@@ -405,4 +430,4 @@ if os.path.exists(final_video_no_sub):
     st.video(final_video_no_sub)
     with open(final_video_no_sub, "rb") as vf1:
         st.download_button("📥 Download Video Final", vf1, file_name="dubbed_video_audio_only.mp4", use_container_width=True)
-
+    
