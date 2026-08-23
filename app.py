@@ -8,6 +8,13 @@ import shutil
 import requests
 import urllib3
 from pydub import AudioSegment
+
+# Force Update yt-dlp to latest version to fix TikTok / YouTube extractors
+try:
+    subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except Exception:
+    pass
+
 import yt_dlp
 from google import genai
 
@@ -78,10 +85,9 @@ def hard_reset_all():
 
 st.title("🎬 Khmer Dubbing Studio Pro")
 
-# Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
@@ -92,7 +98,6 @@ with col_reset:
 
 st.divider()
 
-# 1. API Key
 st.subheader("🔑 ១. បញ្ចូល Gemini API Key")
 gemini_key = st.text_input("🔑 Gemini API Key:", type="password", value="")
 
@@ -115,6 +120,23 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
+    # 1. ព្យាយាមទាញយកតាម yt-dlp (គាំទ្រ TikTok, Dailymotion, YouTube, Facebook ជំនាន់ថ្មីចុងក្រោយ)
+    try:
+        ydl_opts = {
+            'outtmpl': out_path,
+            'nocheckcertificate': True,
+            'quiet': True,
+            'no_warnings': True,
+            'merge_output_format': 'mp4'
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+            return True, "ជោគជ័យ"
+    except Exception as e:
+        pass
+
+    # 2. Fallback សម្រាប់ TikTok តាម TikWM API ប្រសិនបើ yt-dlp មានបញ្ហា
     if "tiktok.com" in url.lower():
         try:
             api_url = "https://www.tikwm.com/api/"
@@ -139,25 +161,7 @@ def download_video_all(url, out_path):
         except Exception:
             pass
 
-    try:
-        ydl_opts = {
-            'outtmpl': out_path,
-            'nocheckcertificate': True,
-            'quiet': True,
-            'no_warnings': True,
-            'merge_output_format': 'mp4'
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-            return True, "ជោគជ័យ"
-    except Exception as e:
-        err_str = str(e)
-        if "youtube" in url.lower() or "youtu.be" in url.lower():
-            return False, "YouTube បានដាក់កំហិត Bot Block លើ Server Cloud។ សូម Upload File MP4 ដោយផ្ទាល់។"
-        return False, f"កំហុសទាញយក៖ {err_str}"
-
-    return False, "មិនអាចទាញយកបានទេ សូម Upload File MP4 ជំនួសវិញ"
+    return False, "មិនអាចទាញយកវីដេអូបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4 ដោយផ្ទាល់।"
 
 # --- Classic Project Gemini Logic ---
 def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
@@ -279,17 +283,17 @@ def generate_and_fit_audio(text, voice, out_path, target_ms):
 
 # 2. Video Source
 st.subheader("📥 ២. ប្រភពវីដេអូដើម")
-input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវីដេអូ៖", ["🔗 URL Link (Dailymotion/TikTok/FB/YouTube)", "📂 Upload File MP4"], key="v_opt")
+input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវីដេអូ៖", ["🔗 URL Link (TikTok/Dailymotion/FB/YouTube)", "📂 Upload File MP4"], key="v_opt")
 
-if input_opt == "🔗 URL Link (Dailymotion/TikTok/FB/YouTube)":
-    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://www.dailymotion.com/video/](https://www.dailymotion.com/video/)...")
+if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
+    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://vt.tiktok.com/](https://vt.tiktok.com/)...")
     if st.button("📥 ទាញយកវីដេអូដើម", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
         else:
             if os.path.exists(CACHE_SCRIPT_FILE): os.remove(CACHE_SCRIPT_FILE)
             st_box = st.empty()
-            st_box.info("⏳ កំពុងទាញយកវីដេអូ...")
+            st_box.info("⏳ កំពុងអាប់ដេត yt-dlp & ទាញយកវីដេអូ...")
             ok, msg = download_video_all(url_in.strip(), video_input_path)
             if ok:
                 st_box.success("🎉 ទាញយកវីដេអូជោគជ័យ!")
@@ -343,7 +347,7 @@ st.divider()
 # 3. Script Editor
 st.subheader("📝 ៣. អត្ថបទ Script SRT ខ្មែរ")
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
-user_script = st.text_area("Script SRT ខ្មែរ (គាំទ្រ Tag (female)/(man) ឬ [ប្រុស]/[ស្រី]):", value=cur_script, height=250)
+user_script = st.text_area("Script SRT ខ្មែរ (គាំទ្រ Tag (female)/(man)):", value=cur_script, height=250)
 if user_script != cur_script:
     with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
         f.write(user_script)
@@ -430,4 +434,4 @@ if os.path.exists(final_video_no_sub):
     st.video(final_video_no_sub)
     with open(final_video_no_sub, "rb") as vf1:
         st.download_button("📥 Download Video Final", vf1, file_name="dubbed_video_audio_only.mp4", use_container_width=True)
-    
+
