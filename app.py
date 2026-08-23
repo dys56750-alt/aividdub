@@ -115,10 +115,10 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # 1. សម្រាប់ TikTok (ដោះស្រាយ Short Link vt.tiktok.com ➔ TikWM API ដោយផ្ទាល់)
-    if "tiktok.com" in url.lower():
+    # 1. សម្រាប់ TikTok ទាំងអស់ (บังខាប់ឱ្យប្រើ TikWM API ១០០% មិនឱ្យ yt-dlp ចាប់យក)
+    if "tiktok.com" in url.lower() or "vt.tiktok.com" in url.lower():
         try:
-            # Expand Link ខ្លីឱ្យចេញ Full URL
+            # Expand Link ខ្លីឱ្យចេញ Full URL របស់ TikTok
             res_expand = requests.head(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
             real_url = res_expand.url
 
@@ -152,7 +152,7 @@ def download_video_all(url, out_path):
                 if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
                     return True, "ជោគជ័យតាម TikWM"
         except Exception as e:
-            pass
+            pass # បើ TikWM ཕམ་ ឱ្យវាធ្លាក់ទៅសាកល្បង yt-dlp ខាងក្រោម
 
     # 2. សម្រាប់ YouTube, Dailymotion, Facebook (ប្រើ yt-dlp)
     ydl_opts = {
@@ -179,6 +179,7 @@ def download_video_all(url, out_path):
         return False, f"កំហុសទាញយក៖ {e}"
 
     return False, "មិនអាចទាញយកបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4"
+    
     
 # --- Gemini Logic ---
 def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
