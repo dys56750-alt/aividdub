@@ -108,6 +108,18 @@ def has_audio_stream(file_path):
     except Exception:
         return False
 
+def get_clean_tiktok_url(url):
+    try:
+        # ប្រើ GET Request ដើម្បី Follow Redirect ដល់គោលដៅពិតប្រាកដ
+        session = requests.Session()
+        res = session.get(url, allow_redirects=True, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
+        clean_url = res.url.split('?')[0] # កាត់ចោល Tracking parameters
+        return clean_url
+    except Exception:
+        return url
+
 def download_video_all(url, out_path):
     url = url.strip()
     for f in [out_path, "t_raw_vid.mp4", "t_raw_aud.mp3"]:
@@ -115,46 +127,63 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # 1. សម្រាប់ TikTok ទាំងអស់ (บังខាប់ឱ្យប្រើ TikWM API ១០០% មិនឱ្យ yt-dlp ចាប់យក)
-    if "tiktok.com" in url.lower() or "vt.tiktok.com" in url.lower():
+    # ==========================================
+    # ១. ដំណើរការសម្រាប់ TIKTOK ដោយឡែក ១០០%
+    # ==========================================
+    if "tiktok.com" in url.lower() or "vt.tiktok" in url.lower():
+        real_url = get_clean_tiktok_url(url)
+        
+        # វិធីសាស្ត្រ A: TikWM API
         try:
-            # Expand Link ខ្លីឱ្យចេញ Full URL របស់ TikTok
-            res_expand = requests.head(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-            real_url = res_expand.url
-
             api_url = "https://www.tikwm.com/api/"
-            payload = {'url': real_url, 'web': 1}
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+                'Accept': 'application/json'
+            }
+            res = requests.post(api_url, headers=headers, data={'url': real_url, 'count': 12, 'cursor': 0, 'web': 1, 'hd': 1}, timeout=15).json()
             
-            res = requests.post(api_url, headers=headers, data=payload, verify=False, timeout=15).json()
             if res.get("code") == 0 and "data" in res:
-                v_url = res["data"].get("play") or res["data"].get("wmplay")
+                v_url = res["data"].get("hdplay") or res["data"].get("play") or res["data"].get("wmplay")
                 m_url = res["data"].get("music")
                 
-                if v_url and not v_url.startswith("http"):
-                    v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
-                if m_url and not m_url.startswith("http"):
-                    m_url = "https://www.tikwm.com" + ("" if m_url.startswith("/") else "/") + m_url
-                
-                t_vid, t_aud = "t_raw_vid.mp4", "t_raw_aud.mp3"
-                rv = requests.get(v_url, headers=headers, verify=False, timeout=30)
-                with open(t_vid, "wb") as f: f.write(rv.content)
-                
-                if m_url:
-                    ra = requests.get(m_url, headers=headers, verify=False, timeout=20)
-                    with open(t_aud, "wb") as f: f.write(ra.content)
-                    subprocess.run(["ffmpeg", "-y", "-i", t_vid, "-i", t_aud, "-c:v", "copy", "-c:a", "aac", out_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    if os.path.exists(t_aud): os.remove(t_aud)
-                else:
-                    if os.path.exists(out_path): os.remove(out_path)
-                    os.rename(t_vid, out_path)
-                if os.path.exists(t_vid): os.remove(t_vid)
-                if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-                    return True, "ជោគជ័យតាម TikWM"
-        except Exception as e:
-            pass # បើ TikWM ཕམ་ ឱ្យវាធ្លាក់ទៅសាកល្បង yt-dlp ខាងក្រោម
+                if v_url:
+                    if not v_url.startswith("http"):
+                        v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
+                    
+                    rv = requests.get(v_url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=30)
+                    with open(out_path, "wb") as f:
+                        f.write(rv.content)
+                        
+                    if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+                        return True, "ជោគជ័យតាម TikWM"
+        except Exception:
+            pass
 
-    # 2. សម្រាប់ YouTube, Dailymotion, Facebook (ប្រើ yt-dlp)
+        # វិធីសាស្ត្រ B: SSSTik Fallback API
+        try:
+            ss_res = requests.post(
+                "https://ssstik.io/abc?url=dl",
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
+                data={'id': real_url, 'locale': 'en', 'tt': 'none'},
+                timeout=15
+            ).text
+            
+            match = re.search(r'href="(https://[^"]+)" class="[^"]*download_link', ss_res)
+            if match:
+                dl_link = match.group(1)
+                rv = requests.get(dl_link, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=30)
+                with open(out_path, "wb") as f:
+                    f.write(rv.content)
+                if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+                    return True, "ជោគជ័យតាម SSSTik"
+        except Exception:
+            pass
+
+        return False, "មិនអាចទាញយក TikTok បានទេ! សូមសាកល្បងម្ដងទៀត ឬ Upload File MP4 ជំនួសវិញ។"
+
+    # ==========================================
+    # ២. ដំណើរការសម្រាប់ YouTube / Dailymotion / FB
+    # ==========================================
     ydl_opts = {
         'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
         'outtmpl': out_path,
@@ -179,6 +208,7 @@ def download_video_all(url, out_path):
         return False, f"កំហុសទាញយក៖ {e}"
 
     return False, "មិនអាចទាញយកបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4"
+    
     
     
 # --- Gemini Logic ---
