@@ -78,19 +78,21 @@ def hard_reset_all():
 
 st.title("🎬 Khmer Dubbing Studio Pro")
 
+# Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
 with col_reset:
     used_mb = get_dir_size_mb()
-    st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
-    if st.button("🗑️ Reset All", type="secondary", use_container_width=True):
+    st.metric(label="💾 ទំហំផ្ទុកប្រើប្រាស់ (Disk Usage)", value=f"{used_mb:.1f} MB")
+    if st.button("🗑️ សម្អាត Storage ទាំងអស់ (Reset)", type="secondary", use_container_width=True):
         hard_reset_all()
-        st.success("✅ បានសម្អាតរួចរាល់!")
+        st.success("✅ បានសម្អាតទំហំផ្ទុកជោគជ័យ!")
         st.rerun()
 
 st.divider()
 
+# 1. API Key
 st.subheader("🔑 ១. បញ្ចូល Gemini API Key")
 gemini_key = st.text_input("🔑 Gemini API Key:", type="password", value="")
 
@@ -113,6 +115,7 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
+    # 1. ព្យាយាមទាញយកតាម yt-dlp
     ydl_opts = {
         'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
         'outtmpl': out_path,
@@ -138,6 +141,7 @@ def download_video_all(url, out_path):
     except Exception:
         pass
 
+    # 2. TikWM Fallback (ដោះស្រាយ Relative URL)
     if "tiktok.com" in url.lower():
         try:
             res_expand = requests.head(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
@@ -151,8 +155,13 @@ def download_video_all(url, out_path):
             if res.get("code") == 0 and "data" in res:
                 v_url = res["data"].get("play") or res["data"].get("wmplay")
                 m_url = res["data"].get("music")
-                t_vid, t_aud = "t_raw_vid.mp4", "t_raw_aud.mp3"
                 
+                if v_url and not v_url.startswith("http"):
+                    v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
+                if m_url and not m_url.startswith("http"):
+                    m_url = "https://www.tikwm.com" + ("" if m_url.startswith("/") else "/") + m_url
+                
+                t_vid, t_aud = "t_raw_vid.mp4", "t_raw_aud.mp3"
                 rv = requests.get(v_url, headers=headers, verify=False, timeout=30)
                 with open(t_vid, "wb") as f: f.write(rv.content)
                 
@@ -172,6 +181,7 @@ def download_video_all(url, out_path):
 
     return False, "មិនអាចទាញយកបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4"
 
+# --- Gemini Logic ---
 def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
     client = genai.Client(api_key=api_key)
     uploaded_audio = client.files.upload(file=audio_path)
@@ -224,10 +234,10 @@ def parse_time_to_ms(t):
 
 def clean_speech_text(text):
     patterns = [
-        r'\[\s*(ស្រី|female|woman|girl|f)\s*\]:?',
-        r'\(\s*(ស្រី|female|woman|girl|f)\s*\):?',
-        r'\[\s*(ប្រុស|male|man|boy|m)\s*\]:?',
-        r'\(\s*(ប្រុស|male|man|boy|m)\s*\):?',
+        r'\[\s*(ស្រី\vert{}female\vert{}woman\vert{}girl\vert{}f)\s*\]:?',
+        r'\(\s*(ស្រី\vert{}female\vert{}woman\vert{}girl\vert{}f)\s*\):?',
+        r'\[\s*(ប្រុស\vert{}male\vert{}man\vert{}boy\vert{}m)\s*\]:?',
+        r'\(\s*(ប្រុស\vert{}male\vert{}man\vert{}boy\vert{}m)\s*\):?',
         r'^(ស្រី|female|woman|girl|f)\s*[:：\-]\s*',
         r'^(ប្រុស|male|man|boy|m)\s*[:：\-]\s*'
     ]
