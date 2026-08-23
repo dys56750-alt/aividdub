@@ -115,35 +115,10 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # 1. ព្យាយាមទាញយកតាម yt-dlp
-    ydl_opts = {
-        'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
-        'outtmpl': out_path,
-        'nocheckcertificate': True,
-        'quiet': True,
-        'no_warnings': True,
-        'merge_output_format': 'mp4',
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-        },
-        'extractor_args': {
-            'youtube': {'player_client': ['android', 'ios', 'web']},
-            'tiktok': {'api_hostname': 'api22-normal-c-useast2a.tiktokv.com'}
-        }
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-            return True, "ជោគជ័យ"
-    except Exception:
-        pass
-
-    # 2. TikWM Fallback (ដោះស្រាយ Relative URL)
+    # 1. សម្រាប់ TikTok (ដោះស្រាយ Short Link vt.tiktok.com ➔ TikWM API ដោយផ្ទាល់)
     if "tiktok.com" in url.lower():
         try:
+            # Expand Link ខ្លីឱ្យចេញ Full URL
             res_expand = requests.head(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
             real_url = res_expand.url
 
@@ -177,10 +152,34 @@ def download_video_all(url, out_path):
                 if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
                     return True, "ជោគជ័យតាម TikWM"
         except Exception as e:
-            return False, f"កំហុសទាញយក៖ {e}"
+            pass
+
+    # 2. សម្រាប់ YouTube, Dailymotion, Facebook (ប្រើ yt-dlp)
+    ydl_opts = {
+        'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
+        'outtmpl': out_path,
+        'nocheckcertificate': True,
+        'quiet': True,
+        'no_warnings': True,
+        'merge_output_format': 'mp4',
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        },
+        'extractor_args': {
+            'youtube': {'player_client': ['android', 'ios', 'web']}
+        }
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+            return True, "ជោគជ័យ"
+    except Exception as e:
+        return False, f"កំហុសទាញយក៖ {e}"
 
     return False, "មិនអាចទាញយកបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4"
-
+    
 # --- Gemini Logic ---
 def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
     client = genai.Client(api_key=api_key)
