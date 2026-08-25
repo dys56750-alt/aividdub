@@ -216,6 +216,7 @@ Strict Rules:
    (female) = for female voice
    (man) = for male voice
 4. Return ONLY valid SRT format. Do not add markdown blocks (no ```srt), explanations, or notes.
+5. Provide EVERY dialogue line until the very end of the file.
 
 Example Format:
 1
@@ -264,49 +265,37 @@ def clean_speech_text(text):
     cleaned = text
     for pat in patterns:
         cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE).strip()
+    # កម្ចាត់កន្ទុយលេខរៀងដែល Gemini អាចច្រឡំបញ្ចូលនៅចុងឃ្លា (ឧ. "... 71")
+    cleaned = re.sub(r'\s+\d{1,4}$', '', cleaned).strip()
     return re.sub(r'^[\[\(].*?[\]\)]\s*[:：]?', '', cleaned).strip()
 
 def parse_srt_to_list(srt_text):
-    lines = srt_text.replace('\r\n', '\n').split('\n')
+    # Robust SRT parser using regex blocks
+    pattern = re.compile(
+        r'(?:(\d+)\s*\n)?'
+        r'((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})'
+        r'[\r\n]+([\s\S]*?)(?=(?:\r?\n\s*\d+\s*\r?\n(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})|(?:\r?\n\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3}\s*-->)|$)',
+        re.MULTILINE
+    )
+    
     items = []
-    curr_seq, curr_start, curr_end, curr_text = None, None, None, []
-    time_pat = re.compile(r'((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})')
-
-    for line in lines:
-        s = line.strip()
-        if not s: continue
-        m = time_pat.search(s)
-        if m:
-            if curr_start and curr_text:
-                full_txt = " ".join(curr_text).strip()
-                tag = "(female)" if any(k in full_txt.lower() for k in ["female", "ស្រី", "(f)", "[ស្រី]"]) else "(man)"
-                items.append({
-                    "seq": curr_seq or str(len(items)+1),
-                    "start_raw": curr_start,
-                    "end_raw": curr_end,
-                    "start": parse_time_to_ms(curr_start),
-                    "end": parse_time_to_ms(curr_end),
-                    "tag": tag,
-                    "text": clean_speech_text(full_txt)
-                })
-            curr_start, curr_end = m.group(1), m.group(2)
-            curr_text = []
-        elif s.isdigit() and not curr_text and not curr_start:
-            curr_seq = s
-        else:
-            curr_text.append(s)
+    for match in pattern.finditer(srt_text):
+        seq, start_t, end_t, text_block = match.groups()
+        full_txt = " ".join([l.strip() for l in text_block.strip().splitlines() if l.strip()])
+        if not full_txt:
+            continue
             
-    if curr_start and curr_text:
-        full_txt = " ".join(curr_text).strip()
         tag = "(female)" if any(k in full_txt.lower() for k in ["female", "ស្រី", "(f)", "[ស្រី]"]) else "(man)"
+        cleaned_text = clean_speech_text(full_txt)
+        
         items.append({
-            "seq": curr_seq or str(len(items)+1),
-            "start_raw": curr_start,
-            "end_raw": curr_end,
-            "start": parse_time_to_ms(curr_start),
-            "end": parse_time_to_ms(curr_end),
+            "seq": seq or str(len(items) + 1),
+            "start_raw": start_t.replace('.', ','),
+            "end_raw": end_t.replace('.', ','),
+            "start": parse_time_to_ms(start_t),
+            "end": parse_time_to_ms(end_t),
             "tag": tag,
-            "text": clean_speech_text(full_txt)
+            "text": cleaned_text
         })
     return items
 
@@ -387,11 +376,11 @@ if os.path.exists(video_input_path):
 st.divider()
 
 # 3. Interactive Video Player + Editable Subtitle Cards
-st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT (ភ្ជាប់ជាមួយ Player)")
+st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT")
 
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 
-# Embed Video Player at the top
+# Video Player with Seek controls
 if os.path.exists(video_input_path):
     with open(video_input_path, "rb") as vf:
         video_b64 = base64.b64encode(vf.read()).decode()
@@ -410,11 +399,6 @@ if os.path.exists(video_input_path):
                 v.play();
             }}
         }}
-        window.addEventListener('message', function(event) {{
-            if (event.data && event.data.type === 'SEEK_VIDEO') {{
-                seekVideo(event.data.time);
-            }}
-        }});
     </script>
     """
     st.components.v1.html(player_html, height=450)
@@ -423,63 +407,69 @@ if os.path.exists(video_input_path):
 sub_list = parse_srt_to_list(cur_script) if cur_script.strip() else []
 
 if sub_list:
-    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ** (ចុច ▶️ ដើម្បី Seek វីដេអូ & កែសម្រួលអត្ថបទនៅខាងក្រោម):")
-    
-    with st.form("sub_edit_form"):
-        updated_subtitles = []
-        
-        for i, item in enumerate(sub_list):
-            sec_start = item["start"] / 1000.0
-            gender_icon = "👩 [ស្រី]" if item["tag"] == "(female)" else "👨 [ប្រុស]"
-            
-            # Header with Green Timecode & Seek Information
-            st.markdown(f"""
-                <div style="color:#28a745; font-size:16px; font-weight:bold; margin-top:10px; margin-bottom:4px;">
-                    #{i+1} [{item['start_raw']} ➔ {item['end_raw']}] &nbsp;|&nbsp; {gender_icon}
-                </div>
-            """, unsafe_allow_html=True)
-            
-            c_tag, c_txt = st.columns([1, 4])
-            with c_tag:
-                new_tag = st.selectbox(
-                    f"តួអង្គ #{i+1}",
-                    options=["(man)", "(female)"],
-                    index=0 if item["tag"] == "(man)" else 1,
-                    key=f"tag_{i}",
-                    label_visibility="collapsed"
-                )
-            with c_txt:
-                new_txt = st.text_input(
-                    f"អត្ថបទ #{i+1}",
-                    value=item["text"],
-                    key=f"txt_{i}",
-                    label_visibility="collapsed"
-                )
-            
-            updated_subtitles.append({
-                "seq": i + 1,
-                "start_raw": item["start_raw"],
-                "end_raw": item["end_raw"],
-                "start": item["start"],
-                "end": item["end"],
-                "tag": new_tag,
-                "text": new_txt
-            })
-            st.markdown("<hr style='margin: 8px 0; border:0; border-top: 1px solid #222;'>", unsafe_allow_html=True)
+    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ**")
 
-        if st.form_submit_button("💾 រក្សាទុកការកែប្រែ Script ទាំងអស់ (Save Changes)", type="primary", use_container_width=True):
-            # Reconstruct Full SRT
-            reconstructed_srt = []
-            for s in updated_subtitles:
-                reconstructed_srt.append(f"{s['seq']}\n{s['start_raw']} --> {s['end_raw']}\n{s['tag']} {s['text']}\n")
-            
-            final_saved_srt = "\n".join(reconstructed_srt)
-            with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
-                f.write(final_saved_srt)
-            st.success("🎉 បានរក្សាទុក Script SRT រួចរាល់!")
-            st.rerun()
+    # Save button placed at the top for easy access
+    if st.button("💾 រក្សាទុកការកែប្រែ Script ទាំងអស់ (Save Top)", type="primary", key="save_top", use_container_width=True):
+        reconstructed_srt = []
+        for i, item in enumerate(sub_list):
+            tag_val = st.session_state.get(f"tag_{i}", item["tag"])
+            txt_val = st.session_state.get(f"txt_{i}", item["text"])
+            reconstructed_srt.append(f"{i+1}\n{item['start_raw']} --> {item['end_raw']}\n{tag_val} {txt_val}\n")
+        
+        final_saved_srt = "\n".join(reconstructed_srt)
+        with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
+            f.write(final_saved_srt)
+        st.success("🎉 បានរក្សាទុក Script SRT រួចរាល់!")
+        st.rerun()
+
+    st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
+
+    # Subtitle Rows Display
+    for i, item in enumerate(sub_list):
+        gender_icon = "👩 [ស្រី]" if item["tag"] == "(female)" else "👨 [ប្រុស]"
+        
+        st.markdown(f"""
+            <div style="color:#28a745; font-size:16px; font-weight:bold; margin-top:12px; margin-bottom:4px;">
+                #{i+1} [{item['start_raw']} ➔ {item['end_raw']}] &nbsp;|&nbsp; {gender_icon}
+            </div>
+        """, unsafe_allow_html=True)
+        
+        c_tag, c_txt = st.columns([1, 4])
+        with c_tag:
+            st.selectbox(
+                f"តួអង្គ #{i+1}",
+                options=["(man)", "(female)"],
+                index=0 if item["tag"] == "(man)" else 1,
+                key=f"tag_{i}",
+                label_visibility="collapsed"
+            )
+        with c_txt:
+            st.text_input(
+                f"អត្ថបទ #{i+1}",
+                value=item["text"],
+                key=f"txt_{i}",
+                label_visibility="collapsed"
+            )
+        st.markdown("<hr style='margin: 8px 0; border:0; border-top: 1px solid #222;'>", unsafe_allow_html=True)
+
+    # Save button placed at the bottom
+    if st.button("💾 រក្សាទុកការកែប្រែ Script ទាំងអស់ (Save Bottom)", type="primary", key="save_bottom", use_container_width=True):
+        reconstructed_srt = []
+        for i, item in enumerate(sub_list):
+            tag_val = st.session_state.get(f"tag_{i}", item["tag"])
+            txt_val = st.session_state.get(f"txt_{i}", item["text"])
+            reconstructed_srt.append(f"{i+1}\n{item['start_raw']} --> {item['end_raw']}\n{tag_val} {txt_val}\n")
+        
+        final_saved_srt = "\n".join(reconstructed_srt)
+        with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
+            f.write(final_saved_srt)
+        st.success("🎉 បានរក្សាទុក Script SRT រួចរាល់!")
+        st.rerun()
 else:
     st.info("💡 មិនទាន់មាន Script SRT នៅឡើយទេ។ សូមចុចប៊ូតុងបកប្រែជាមួយ Gemini នៅខាងលើ។")
+
+st.divider()
 
 v_choice = st.selectbox("🎙️ សំឡេងអាន៖", ["🤖 អូតូ (ប្រុស/ស្រី តាម Tag)", "👨 Piseth (ប្រុសសុទ្ធ)", "👩 Sreymom (ស្រីសុទ្ធ)"])
 
@@ -487,7 +477,7 @@ st.divider()
 
 # 4. Step 1: TTS Audio Generation
 st.subheader("🔊 ៤. ជំហានទី ១៖ បង្កើតសំឡេង Auto-Sync (TTS)")
-if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync (MP3)", type="primary"):
+if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync (MP3)", type="primary", use_container_width=True):
     fresh_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
     if not fresh_script.strip(): 
         st.error("សូមបញ្ចូល Script SRT!")
@@ -508,7 +498,6 @@ if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេ�
                     combined += AudioSegment.silent(duration=it["start"] - current_ms)
                     current_ms = it["start"]
                 
-                # Determine voice
                 v = "km-KH-PisethNeural"
                 if "🤖" in v_choice or "អូតូ" in v_choice:
                     if it["tag"] == "(female)":
