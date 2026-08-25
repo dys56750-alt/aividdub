@@ -21,11 +21,11 @@ st.set_page_config(page_title="Khmer Dubbing Studio Pro", layout="wide")
 # Custom UI Styling
 st.markdown("""
     <style>
-    div[data-baseweb="textarea"] textarea {
-        background-color: #000000 !important;
+    div[data-baseweb="input"] input, div[data-baseweb="textarea"] textarea {
+        background-color: #121214 !important;
         color: #FFFFFF !important;
         font-size: 15px !important;
-        border: 1px solid #444444 !important;
+        border: 1px solid #333333 !important;
     }
     div.stButton > button[kind="primary"] {
         background-color: #28a745 !important;
@@ -33,18 +33,12 @@ st.markdown("""
         color: white !important;
         font-weight: bold !important;
     }
-    .sub-item-btn {
-        background: #1e1e24;
-        border: 1px solid #333;
+    .sub-card {
+        background: #18181c;
+        border: 1px solid #2e2e38;
         border-radius: 8px;
-        padding: 8px 12px;
-        margin-bottom: 6px;
-        cursor: pointer;
-        transition: 0.2s;
-    }
-    .sub-item-btn:hover {
-        background: #2b2b36;
-        border-color: #28a745;
+        padding: 10px;
+        margin-bottom: 12px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -95,7 +89,7 @@ st.title("🎬 Khmer Dubbing Studio Pro")
 # Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. ផ្ទៀងផ្ទាត់ & Sync ➔ ៤. Render")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល ➔ ៤. Render")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
@@ -139,10 +133,9 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # 1. សម្រាប់ TikTok (TikWM + SSSTik)
+    # 1. TikTok
     if "tiktok.com" in url.lower() or "vt.tiktok" in url.lower():
         real_url = get_clean_tiktok_url(url)
-        
         try:
             api_url = "https://www.tikwm.com/api/"
             headers = {
@@ -150,17 +143,14 @@ def download_video_all(url, out_path):
                 'Accept': 'application/json'
             }
             res = requests.post(api_url, headers=headers, data={'url': real_url, 'count': 12, 'cursor': 0, 'web': 1, 'hd': 1}, timeout=15).json()
-            
             if res.get("code") == 0 and "data" in res:
                 v_url = res["data"].get("hdplay") or res["data"].get("play") or res["data"].get("wmplay")
                 if v_url:
                     if not v_url.startswith("http"):
                         v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
-                    
                     rv = requests.get(v_url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=30)
                     with open(out_path, "wb") as f:
                         f.write(rv.content)
-                        
                     if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
                         return True, "ជោគជ័យតាម TikWM"
         except Exception:
@@ -173,7 +163,6 @@ def download_video_all(url, out_path):
                 data={'id': real_url, 'locale': 'en', 'tt': 'none'},
                 timeout=15
             ).text
-            
             match = re.search(r'href="(https://[^"]+)" class="[^"]*download_link', ss_res)
             if match:
                 dl_link = match.group(1)
@@ -187,7 +176,7 @@ def download_video_all(url, out_path):
 
         return False, "មិនអាចទាញយក TikTok បានទេ!"
 
-    # 2. សម្រាប់ YouTube / Dailymotion / FB
+    # 2. YouTube / Others
     ydl_opts = {
         'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
         'outtmpl': out_path,
@@ -277,10 +266,10 @@ def clean_speech_text(text):
         cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE).strip()
     return re.sub(r'^[\[\(].*?[\]\)]\s*[:：]?', '', cleaned).strip()
 
-def parse_srt(srt_text, mode):
+def parse_srt_to_list(srt_text):
     lines = srt_text.replace('\r\n', '\n').split('\n')
     items = []
-    curr_start, curr_end, curr_text = None, None, []
+    curr_seq, curr_start, curr_end, curr_text = None, None, None, []
     time_pat = re.compile(r'((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})')
 
     for line in lines:
@@ -289,30 +278,36 @@ def parse_srt(srt_text, mode):
         m = time_pat.search(s)
         if m:
             if curr_start and curr_text:
-                sp = " ".join(curr_text).strip()
-                v = "km-KH-PisethNeural"
-                if "🤖" in mode or "អូតូ" in mode:
-                    if any(k in sp.lower() for k in ["ស្រី", "female", "(female)", "[ស្រី]", "woman", "(f)"]): 
-                        v = "km-KH-SreymomNeural"
-                elif "👩" in mode: 
-                    v = "km-KH-SreymomNeural"
-                cl = clean_speech_text(sp)
-                if cl: items.append({"start_raw": curr_start, "end_raw": curr_end, "start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v, "raw": sp})
+                full_txt = " ".join(curr_text).strip()
+                tag = "(female)" if any(k in full_txt.lower() for k in ["female", "ស្រី", "(f)", "[ស្រី]"]) else "(man)"
+                items.append({
+                    "seq": curr_seq or str(len(items)+1),
+                    "start_raw": curr_start,
+                    "end_raw": curr_end,
+                    "start": parse_time_to_ms(curr_start),
+                    "end": parse_time_to_ms(curr_end),
+                    "tag": tag,
+                    "text": clean_speech_text(full_txt)
+                })
             curr_start, curr_end = m.group(1), m.group(2)
             curr_text = []
-        elif not s.isdigit() and "-->" not in s:
+        elif s.isdigit() and not curr_text and not curr_start:
+            curr_seq = s
+        else:
             curr_text.append(s)
             
     if curr_start and curr_text:
-        sp = " ".join(curr_text).strip()
-        v = "km-KH-PisethNeural"
-        if "🤖" in mode or "អូតូ" in mode:
-            if any(k in sp.lower() for k in ["ស្រី", "female", "(female)", "[ស្រី]", "woman", "(f)"]): 
-                v = "km-KH-SreymomNeural"
-        elif "👩" in mode: 
-            v = "km-KH-SreymomNeural"
-        cl = clean_speech_text(sp)
-        if cl: items.append({"start_raw": curr_start, "end_raw": curr_end, "start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v, "raw": sp})
+        full_txt = " ".join(curr_text).strip()
+        tag = "(female)" if any(k in full_txt.lower() for k in ["female", "ស្រី", "(f)", "[ស្រី]"]) else "(man)"
+        items.append({
+            "seq": curr_seq or str(len(items)+1),
+            "start_raw": curr_start,
+            "end_raw": curr_end,
+            "start": parse_time_to_ms(curr_start),
+            "end": parse_time_to_ms(curr_end),
+            "tag": tag,
+            "text": clean_speech_text(full_txt)
+        })
     return items
 
 def generate_and_fit_audio(text, voice, out_path, target_ms):
@@ -391,41 +386,21 @@ if os.path.exists(video_input_path):
 
 st.divider()
 
-# 3. Interactive Video Player & Script Inspector
-st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT (ចុច Jump ទៅវិនាទីវីដេអូ)")
+# 3. Interactive Video Player + Editable Subtitle Cards
+st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT (ភ្ជាប់ជាមួយ Player)")
 
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 
+# Embed Video Player at the top
 if os.path.exists(video_input_path):
-    # Base64 encode for embedding into Custom HTML5 Player
     with open(video_input_path, "rb") as vf:
         video_b64 = base64.b64encode(vf.read()).decode()
     
-    parsed_items = parse_srt(cur_script, "🤖 អូតូ") if cur_script.strip() else []
-
-    # Generate Quick Jump List HTML
-    jump_buttons_html = ""
-    for idx, item in enumerate(parsed_items):
-        sec = item["start"] / 1000.0
-        gender_icon = "👩" if any(k in item["raw"].lower() for k in ["female", "ស្រី"]) else "👨"
-        jump_buttons_html += f"""
-        <div class="sub-item-btn" onclick="seekVideo({sec})">
-            <span style="color:#28a745; font-weight:bold;">#{idx+1} [{item['start_raw']} ➔ {item['end_raw']}]</span> 
-            <span>{gender_icon} {item['text']}</span>
-        </div>
-        """
-
     player_html = f"""
-    <div style="background:#111; padding:15px; border-radius:10px; margin-bottom:20px; border:1px solid #333;">
-        <video id="syncPlayer" controls style="width:100%; max-height:450px; border-radius:8px; background:#000;">
+    <div style="background:#000; padding:10px; border-radius:10px; margin-bottom:15px; border:1px solid #333; text-align:center;">
+        <video id="syncPlayer" controls style="width:100%; max-height:420px; border-radius:8px; background:#000;">
             <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
         </video>
-        <div style="margin-top:10px; font-size:14px; color:#aaa;">
-            📌 <b>ចុចលើជួរអត្ថបទខាងក្រោម ដើម្បី Play វីដេអូចំវិនាទីនោះភ្លាមៗ៖</b>
-        </div>
-        <div style="max-height:220px; overflow-y:auto; margin-top:8px; padding-right:5px;">
-            {jump_buttons_html if jump_buttons_html else "<p style='color:#777;'>មិនទាន់មាន Script SRT ទេ។</p>"}
-        </div>
     </div>
     <script>
         function seekVideo(timeSec) {{
@@ -435,14 +410,76 @@ if os.path.exists(video_input_path):
                 v.play();
             }}
         }}
+        window.addEventListener('message', function(event) {{
+            if (event.data && event.data.type === 'SEEK_VIDEO') {{
+                seekVideo(event.data.time);
+            }}
+        }});
     </script>
     """
-    st.components.v1.html(player_html, height=720)
+    st.components.v1.html(player_html, height=450)
 
-user_script = st.text_area("អត្ថបទ Script SRT ពេញលេញ (អាចកែប្រែដោយសេរីនៅទីនេះ):", value=cur_script, height=220)
-if user_script != cur_script:
-    with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
-        f.write(user_script)
+# Subtitle Cards Editor
+sub_list = parse_srt_to_list(cur_script) if cur_script.strip() else []
+
+if sub_list:
+    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ** (ចុច ▶️ ដើម្បី Seek វីដេអូ & កែសម្រួលអត្ថបទនៅខាងក្រោម):")
+    
+    with st.form("sub_edit_form"):
+        updated_subtitles = []
+        
+        for i, item in enumerate(sub_list):
+            sec_start = item["start"] / 1000.0
+            gender_icon = "👩 [ស្រី]" if item["tag"] == "(female)" else "👨 [ប្រុស]"
+            
+            # Header with Green Timecode & Seek Information
+            st.markdown(f"""
+                <div style="color:#28a745; font-size:16px; font-weight:bold; margin-top:10px; margin-bottom:4px;">
+                    #{i+1} [{item['start_raw']} ➔ {item['end_raw']}] &nbsp;|&nbsp; {gender_icon}
+                </div>
+            """, unsafe_allow_html=True)
+            
+            c_tag, c_txt = st.columns([1, 4])
+            with c_tag:
+                new_tag = st.selectbox(
+                    f"តួអង្គ #{i+1}",
+                    options=["(man)", "(female)"],
+                    index=0 if item["tag"] == "(man)" else 1,
+                    key=f"tag_{i}",
+                    label_visibility="collapsed"
+                )
+            with c_txt:
+                new_txt = st.text_input(
+                    f"អត្ថបទ #{i+1}",
+                    value=item["text"],
+                    key=f"txt_{i}",
+                    label_visibility="collapsed"
+                )
+            
+            updated_subtitles.append({
+                "seq": i + 1,
+                "start_raw": item["start_raw"],
+                "end_raw": item["end_raw"],
+                "start": item["start"],
+                "end": item["end"],
+                "tag": new_tag,
+                "text": new_txt
+            })
+            st.markdown("<hr style='margin: 8px 0; border:0; border-top: 1px solid #222;'>", unsafe_allow_html=True)
+
+        if st.form_submit_button("💾 រក្សាទុកការកែប្រែ Script ទាំងអស់ (Save Changes)", type="primary", use_container_width=True):
+            # Reconstruct Full SRT
+            reconstructed_srt = []
+            for s in updated_subtitles:
+                reconstructed_srt.append(f"{s['seq']}\n{s['start_raw']} --> {s['end_raw']}\n{s['tag']} {s['text']}\n")
+            
+            final_saved_srt = "\n".join(reconstructed_srt)
+            with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
+                f.write(final_saved_srt)
+            st.success("🎉 បានរក្សាទុក Script SRT រួចរាល់!")
+            st.rerun()
+else:
+    st.info("💡 មិនទាន់មាន Script SRT នៅឡើយទេ។ សូមចុចប៊ូតុងបកប្រែជាមួយ Gemini នៅខាងលើ។")
 
 v_choice = st.selectbox("🎙️ សំឡេងអាន៖", ["🤖 អូតូ (ប្រុស/ស្រី តាម Tag)", "👨 Piseth (ប្រុសសុទ្ធ)", "👩 Sreymom (ស្រីសុទ្ធ)"])
 
@@ -451,12 +488,12 @@ st.divider()
 # 4. Step 1: TTS Audio Generation
 st.subheader("🔊 ៤. ជំហានទី ១៖ បង្កើតសំឡេង Auto-Sync (TTS)")
 if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync (MP3)", type="primary"):
-    raw_text = user_script.strip()
-    if not raw_text: 
+    fresh_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
+    if not fresh_script.strip(): 
         st.error("សូមបញ្ចូល Script SRT!")
     else:
-        items = parse_srt(raw_text, v_choice)
-        total = len(items)
+        parsed_items = parse_srt_to_list(fresh_script)
+        total = len(parsed_items)
         st.markdown(f"### 📊 រកឃើញសរុប **{total} ជួរ**")
         
         if total > 0:
@@ -465,15 +502,23 @@ if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេ�
             prog = st.progress(0)
             status = st.empty()
             
-            for idx, it in enumerate(items):
+            for idx, it in enumerate(parsed_items):
                 status.text(f"⚡ កំពុង Sync ជួរទី {idx+1}/{total}: {it['text'][:25]}...")
                 if it["start"] > current_ms:
                     combined += AudioSegment.silent(duration=it["start"] - current_ms)
                     current_ms = it["start"]
                 
+                # Determine voice
+                v = "km-KH-PisethNeural"
+                if "🤖" in v_choice or "អូតូ" in v_choice:
+                    if it["tag"] == "(female)":
+                        v = "km-KH-SreymomNeural"
+                elif "👩" in v_choice:
+                    v = "km-KH-SreymomNeural"
+
                 temp_f = f"temp_{idx}.mp3"
                 try:
-                    generate_and_fit_audio(it["text"], it["voice"], temp_f, it["end"] - it["start"])
+                    generate_and_fit_audio(it["text"], v, temp_f, it["end"] - it["start"])
                     if os.path.exists(temp_f):
                         seg = AudioSegment.from_file(temp_f)
                         combined += seg
