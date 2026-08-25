@@ -494,7 +494,7 @@ if os.path.exists(raw_khmer_audio):
     with open(raw_khmer_audio, "rb") as af:
         st.download_button("📥 ទាញយក File MP3 សុទ្ធ", af, file_name="khmer_audio_synced.mp3")
 
-st.divider)
+st.divider()
 
 # 5. Step 2: Super Fast Render
 st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង")
@@ -526,6 +526,3 @@ if os.path.exists(final_video_no_sub):
     st.video(final_video_no_sub)
     with open(final_video_no_sub, "rb") as vf1:
         st.download_button("📥 Download Video Final", vf1, file_name="dubbed_video_audio_only.mp4", use_container_width=True)
-
-
-     
