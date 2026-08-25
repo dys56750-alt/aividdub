@@ -1,10 +1,11 @@
 import streamlit as st
 import os
 import re
-import ssl 
+import ssl
 import subprocess
 import glob
 import shutil
+import base64
 import requests
 import urllib3
 from pydub import AudioSegment
@@ -31,6 +32,19 @@ st.markdown("""
         border-color: #28a745 !important;
         color: white !important;
         font-weight: bold !important;
+    }
+    .sub-item-btn {
+        background: #1e1e24;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        transition: 0.2s;
+    }
+    .sub-item-btn:hover {
+        background: #2b2b36;
+        border-color: #28a745;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -81,11 +95,11 @@ st.title("🎬 Khmer Dubbing Studio Pro")
 # Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. បង្កើតសំឡេង Auto-Sync ➔ ៤. Render វីដេអូ")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. ផ្ទៀងផ្ទាត់ & Sync ➔ ៤. Render")
 with col_reset:
     used_mb = get_dir_size_mb()
-    st.metric(label="💾 ទំហំផ្ទុកប្រើប្រាស់ (Disk Usage)", value=f"{used_mb:.1f} MB")
-    if st.button("🗑️ សម្អាត Storage ទាំងអស់ (Reset)", type="secondary", use_container_width=True):
+    st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
+    if st.button("🗑️ Reset Storage", type="secondary", use_container_width=True):
         hard_reset_all()
         st.success("✅ បានសម្អាតទំហំផ្ទុកជោគជ័យ!")
         st.rerun()
@@ -110,13 +124,11 @@ def has_audio_stream(file_path):
 
 def get_clean_tiktok_url(url):
     try:
-        # ប្រើ GET Request ដើម្បី Follow Redirect ដល់គោលដៅពិតប្រាកដ
         session = requests.Session()
         res = session.get(url, allow_redirects=True, timeout=10, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         })
-        clean_url = res.url.split('?')[0] # កាត់ចោល Tracking parameters
-        return clean_url
+        return res.url.split('?')[0]
     except Exception:
         return url
 
@@ -127,13 +139,10 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # ==========================================
-    # ១. ដំណើរការសម្រាប់ TIKTOK ដោយឡែក ១០០%
-    # ==========================================
+    # 1. សម្រាប់ TikTok (TikWM + SSSTik)
     if "tiktok.com" in url.lower() or "vt.tiktok" in url.lower():
         real_url = get_clean_tiktok_url(url)
         
-        # វិធីសាស្ត្រ A: TikWM API
         try:
             api_url = "https://www.tikwm.com/api/"
             headers = {
@@ -144,8 +153,6 @@ def download_video_all(url, out_path):
             
             if res.get("code") == 0 and "data" in res:
                 v_url = res["data"].get("hdplay") or res["data"].get("play") or res["data"].get("wmplay")
-                m_url = res["data"].get("music")
-                
                 if v_url:
                     if not v_url.startswith("http"):
                         v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
@@ -159,7 +166,6 @@ def download_video_all(url, out_path):
         except Exception:
             pass
 
-        # វិធីសាស្ត្រ B: SSSTik Fallback API
         try:
             ss_res = requests.post(
                 "https://ssstik.io/abc?url=dl",
@@ -179,11 +185,9 @@ def download_video_all(url, out_path):
         except Exception:
             pass
 
-        return False, "មិនអាចទាញយក TikTok បានទេ! សូមសាកល្បងម្ដងទៀត ឬ Upload File MP4 ជំនួសវិញ។"
+        return False, "មិនអាចទាញយក TikTok បានទេ!"
 
-    # ==========================================
-    # ២. ដំណើរការសម្រាប់ YouTube / Dailymotion / FB
-    # ==========================================
+    # 2. សម្រាប់ YouTube / Dailymotion / FB
     ydl_opts = {
         'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
         'outtmpl': out_path,
@@ -207,11 +211,8 @@ def download_video_all(url, out_path):
     except Exception as e:
         return False, f"កំហុសទាញយក៖ {e}"
 
-    return False, "មិនអាចទាញយកបានទេ សូមពិនិត្យមើល Link ឬ Upload File MP4"
-    
-    
-    
-# --- Gemini Logic ---
+    return False, "មិនអាចទាញយកបានទេ សូម Upload File MP4"
+
 def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
     client = genai.Client(api_key=api_key)
     uploaded_audio = client.files.upload(file=audio_path)
@@ -264,10 +265,10 @@ def parse_time_to_ms(t):
 
 def clean_speech_text(text):
     patterns = [
-        r'\[\s*(ស្រី\vert{}female\vert{}woman\vert{}girl\vert{}f)\s*\]:?',
-        r'\(\s*(ស្រី\vert{}female\vert{}woman\vert{}girl\vert{}f)\s*\):?',
-        r'\[\s*(ប្រុស\vert{}male\vert{}man\vert{}boy\vert{}m)\s*\]:?',
-        r'\(\s*(ប្រុស\vert{}male\vert{}man\vert{}boy\vert{}m)\s*\):?',
+        r'\[\s*(ស្រី|female|woman|girl|f)\s*\]:?',
+        r'\(\s*(ស្រី|female|woman|girl|f)\s*\):?',
+        r'\[\s*(ប្រុស|male|man|boy|m)\s*\]:?',
+        r'\(\s*(ប្រុស|male|man|boy|m)\s*\):?',
         r'^(ស្រី|female|woman|girl|f)\s*[:：\-]\s*',
         r'^(ប្រុស|male|man|boy|m)\s*[:：\-]\s*'
     ]
@@ -296,7 +297,7 @@ def parse_srt(srt_text, mode):
                 elif "👩" in mode: 
                     v = "km-KH-SreymomNeural"
                 cl = clean_speech_text(sp)
-                if cl: items.append({"start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v})
+                if cl: items.append({"start_raw": curr_start, "end_raw": curr_end, "start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v, "raw": sp})
             curr_start, curr_end = m.group(1), m.group(2)
             curr_text = []
         elif not s.isdigit() and "-->" not in s:
@@ -311,7 +312,7 @@ def parse_srt(srt_text, mode):
         elif "👩" in mode: 
             v = "km-KH-SreymomNeural"
         cl = clean_speech_text(sp)
-        if cl: items.append({"start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v})
+        if cl: items.append({"start_raw": curr_start, "end_raw": curr_end, "start": parse_time_to_ms(curr_start), "end": parse_time_to_ms(curr_end), "text": cl, "voice": v, "raw": sp})
     return items
 
 def generate_and_fit_audio(text, voice, out_path, target_ms):
@@ -334,7 +335,7 @@ st.subheader("📥 ២. ប្រភពវីដេអូដើម")
 input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវីដេអូ៖", ["🔗 URL Link (TikTok/Dailymotion/FB/YouTube)", "📂 Upload File MP4"], key="v_opt")
 
 if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
-    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://www.dailymotion.com/video/](https://www.dailymotion.com/video/)... ឬ [https://vt.tiktok.com/](https://vt.tiktok.com/)...")
+    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://vt.tiktok.com/](https://vt.tiktok.com/)... ឬ [https://youtube.com/](https://youtube.com/)...")
     if st.button("📥 ទាញយកវីដេអូដើម", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
@@ -356,8 +357,6 @@ else:
         st.success("✅ បាន Upload រួចរាល់!")
 
 if os.path.exists(video_input_path):
-    st.video(video_input_path)
-    
     col_vid_del, col_vid_ai = st.columns([1, 3])
     with col_vid_del:
         if st.button("🗑️ លុបវីដេអូនេះ", use_container_width=True):
@@ -392,10 +391,55 @@ if os.path.exists(video_input_path):
 
 st.divider()
 
-# 3. Script Editor
-st.subheader("📝 ៣. អត្ថបទ Script SRT ខ្មែរ")
+# 3. Interactive Video Player & Script Inspector
+st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT (ចុច Jump ទៅវិនាទីវីដេអូ)")
+
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
-user_script = st.text_area("Script SRT ខ្មែរ (គាំទ្រ Tag (female)/(man) ឬ [ប្រុស]/[ស្រី]):", value=cur_script, height=250)
+
+if os.path.exists(video_input_path):
+    # Base64 encode for embedding into Custom HTML5 Player
+    with open(video_input_path, "rb") as vf:
+        video_b64 = base64.b64encode(vf.read()).decode()
+    
+    parsed_items = parse_srt(cur_script, "🤖 អូតូ") if cur_script.strip() else []
+
+    # Generate Quick Jump List HTML
+    jump_buttons_html = ""
+    for idx, item in enumerate(parsed_items):
+        sec = item["start"] / 1000.0
+        gender_icon = "👩" if any(k in item["raw"].lower() for k in ["female", "ស្រី"]) else "👨"
+        jump_buttons_html += f"""
+        <div class="sub-item-btn" onclick="seekVideo({sec})">
+            <span style="color:#28a745; font-weight:bold;">#{idx+1} [{item['start_raw']} ➔ {item['end_raw']}]</span> 
+            <span>{gender_icon} {item['text']}</span>
+        </div>
+        """
+
+    player_html = f"""
+    <div style="background:#111; padding:15px; border-radius:10px; margin-bottom:20px; border:1px solid #333;">
+        <video id="syncPlayer" controls style="width:100%; max-height:450px; border-radius:8px; background:#000;">
+            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+        </video>
+        <div style="margin-top:10px; font-size:14px; color:#aaa;">
+            📌 <b>ចុចលើជួរអត្ថបទខាងក្រោម ដើម្បី Play វីដេអូចំវិនាទីនោះភ្លាមៗ៖</b>
+        </div>
+        <div style="max-height:220px; overflow-y:auto; margin-top:8px; padding-right:5px;">
+            {jump_buttons_html if jump_buttons_html else "<p style='color:#777;'>មិនទាន់មាន Script SRT ទេ។</p>"}
+        </div>
+    </div>
+    <script>
+        function seekVideo(timeSec) {{
+            var v = document.getElementById('syncPlayer');
+            if (v) {{
+                v.currentTime = timeSec;
+                v.play();
+            }}
+        }}
+    </script>
+    """
+    st.components.v1.html(player_html, height=720)
+
+user_script = st.text_area("អត្ថបទ Script SRT ពេញលេញ (អាចកែប្រែដោយសេរីនៅទីនេះ):", value=cur_script, height=220)
 if user_script != cur_script:
     with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
         f.write(user_script)
@@ -404,7 +448,7 @@ v_choice = st.selectbox("🎙️ សំឡេងអាន៖", ["🤖 អូត�
 
 st.divider()
 
-# 4. Step 1: TTS Audio Generation (Cached)
+# 4. Step 1: TTS Audio Generation
 st.subheader("🔊 ៤. ជំហានទី ១៖ បង្កើតសំឡេង Auto-Sync (TTS)")
 if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync (MP3)", type="primary"):
     raw_text = user_script.strip()
@@ -450,9 +494,9 @@ if os.path.exists(raw_khmer_audio):
     with open(raw_khmer_audio, "rb") as af:
         st.download_button("📥 ទាញយក File MP3 សុទ្ធ", af, file_name="khmer_audio_synced.mp3")
 
-st.divider()
+st.divider)
 
-# 5. Step 2: Super Fast Render (2 Seconds)
+# 5. Step 2: Super Fast Render
 st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង")
 
 if st.button("🚀 Render Video + Audio Only", type="primary", use_container_width=True):
@@ -483,3 +527,5 @@ if os.path.exists(final_video_no_sub):
     with open(final_video_no_sub, "rb") as vf1:
         st.download_button("📥 Download Video Final", vf1, file_name="dubbed_video_audio_only.mp4", use_container_width=True)
 
+
+     
