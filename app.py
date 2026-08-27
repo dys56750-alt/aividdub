@@ -18,14 +18,22 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="Khmer Dubbing Studio Pro", layout="wide")
 
-# Custom UI Styling
+# Custom UI Styling for Compact Elements
 st.markdown("""
     <style>
-    div[data-baseweb="input"] input, div[data-baseweb="textarea"] textarea {
+    div[data-baseweb="input"] input {
         background-color: #121214 !important;
         color: #FFFFFF !important;
-        font-size: 15px !important;
+        font-size: 14px !important;
         border: 1px solid #333333 !important;
+        padding: 6px 10px !important;
+    }
+    div[data-baseweb="select"] > div {
+        background-color: #121214 !important;
+        color: #FFFFFF !important;
+        font-size: 13px !important;
+        border: 1px solid #333333 !important;
+        min-height: 38px !important;
     }
     div.stButton > button[kind="primary"] {
         background-color: #28a745 !important;
@@ -33,12 +41,12 @@ st.markdown("""
         color: white !important;
         font-weight: bold !important;
     }
-    .sub-card {
-        background: #18181c;
-        border: 1px solid #2e2e38;
-        border-radius: 8px;
-        padding: 10px;
-        margin-bottom: 12px;
+    .time-header {
+        color: #28a745;
+        font-size: 14px;
+        font-weight: bold;
+        margin-top: 10px;
+        margin-bottom: 2px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -265,12 +273,13 @@ def clean_speech_text(text):
     cleaned = text
     for pat in patterns:
         cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE).strip()
-    # កម្ចាត់កន្ទុយលេខរៀងដែល Gemini អាចច្រឡំបញ្ចូលនៅចុងឃ្លា (ឧ. "... 71")
     cleaned = re.sub(r'\s+\d{1,4}$', '', cleaned).strip()
     return re.sub(r'^[\[\(].*?[\]\)]\s*[:：]?', '', cleaned).strip()
 
 def parse_srt_to_list(srt_text):
-    # Robust SRT parser using regex blocks
+    if not srt_text.strip():
+        return []
+    # Enhanced robust parser
     pattern = re.compile(
         r'(?:(\d+)\s*\n)?'
         r'((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})'
@@ -375,12 +384,11 @@ if os.path.exists(video_input_path):
 
 st.divider()
 
-# 3. Interactive Video Player + Editable Subtitle Cards
+# 3. Interactive Video Player + Compact Subtitle Rows
 st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT")
 
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 
-# Video Player with Seek controls
 if os.path.exists(video_input_path):
     with open(video_input_path, "rb") as vf:
         video_b64 = base64.b64encode(vf.read()).decode()
@@ -403,68 +411,64 @@ if os.path.exists(video_input_path):
     """
     st.components.v1.html(player_html, height=450)
 
-# Subtitle Cards Editor
-sub_list = parse_srt_to_list(cur_script) if cur_script.strip() else []
+sub_list = parse_srt_to_list(cur_script)
+
+def save_current_subtitles(items_data):
+    reconstructed_srt = []
+    for i, item in enumerate(items_data):
+        tag_val = st.session_state.get(f"tag_{i}", item["tag"])
+        txt_val = st.session_state.get(f"txt_{i}", item["text"])
+        reconstructed_srt.append(f"{i+1}\n{item['start_raw']} --> {item['end_raw']}\n{tag_val} {txt_val}\n")
+    
+    final_saved_srt = "\n".join(reconstructed_srt)
+    with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
+        f.write(final_saved_srt)
+    st.toast("✅ បានរក្សាទុកការកែប្រែ Script ជោគជ័យ!", icon="💾")
 
 if sub_list:
-    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ**")
-
-    # Save button placed at the top for easy access
-    if st.button("💾 រក្សាទុកការកែប្រែ Script ទាំងអស់ (Save Top)", type="primary", key="save_top", use_container_width=True):
-        reconstructed_srt = []
-        for i, item in enumerate(sub_list):
-            tag_val = st.session_state.get(f"tag_{i}", item["tag"])
-            txt_val = st.session_state.get(f"txt_{i}", item["text"])
-            reconstructed_srt.append(f"{i+1}\n{item['start_raw']} --> {item['end_raw']}\n{tag_val} {txt_val}\n")
-        
-        final_saved_srt = "\n".join(reconstructed_srt)
-        with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
-            f.write(final_saved_srt)
-        st.success("🎉 បានរក្សាទុក Script SRT រួចរាល់!")
+    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ** (Scroll បានពេញលេញ):")
+    
+    # Save button Top
+    if st.button("💾 រក្សាទុកការកែប្រែ Script (Save Top)", type="primary", key="btn_save_top", use_container_width=True):
+        save_current_subtitles(sub_list)
         st.rerun()
 
-    st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
 
-    # Subtitle Rows Display
+    # Clean, Compact Subtitle Row Display
     for i, item in enumerate(sub_list):
-        gender_icon = "👩 [ស្រី]" if item["tag"] == "(female)" else "👨 [ប្រុស]"
+        gender_icon = "👩" if item["tag"] == "(female)" else "👨"
         
+        # Timecode Header
         st.markdown(f"""
-            <div style="color:#28a745; font-size:16px; font-weight:bold; margin-top:12px; margin-bottom:4px;">
-                #{i+1} [{item['start_raw']} ➔ {item['end_raw']}] &nbsp;|&nbsp; {gender_icon}
+            <div class="time-header">
+                #{i+1} [{item['start_raw']} ➔ {item['end_raw']}]
             </div>
         """, unsafe_allow_html=True)
         
-        c_tag, c_txt = st.columns([1, 4])
+        # Compact Column Ratio: 0.8 (Gender Dropdown) vs 4.2 (Text Input)
+        c_tag, c_txt = st.columns([0.8, 4.2])
         with c_tag:
             st.selectbox(
-                f"តួអង្គ #{i+1}",
+                f"Tag #{i+1}",
                 options=["(man)", "(female)"],
+                format_func=lambda x: "👨 ប្រុស" if x == "(man)" else "👩 ស្រី",
                 index=0 if item["tag"] == "(man)" else 1,
                 key=f"tag_{i}",
                 label_visibility="collapsed"
             )
         with c_txt:
             st.text_input(
-                f"អត្ថបទ #{i+1}",
+                f"Text #{i+1}",
                 value=item["text"],
                 key=f"txt_{i}",
                 label_visibility="collapsed"
             )
-        st.markdown("<hr style='margin: 8px 0; border:0; border-top: 1px solid #222;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin: 6px 0; border:0; border-top: 1px solid #222;'>", unsafe_allow_html=True)
 
-    # Save button placed at the bottom
-    if st.button("💾 រក្សាទុកការកែប្រែ Script ទាំងអស់ (Save Bottom)", type="primary", key="save_bottom", use_container_width=True):
-        reconstructed_srt = []
-        for i, item in enumerate(sub_list):
-            tag_val = st.session_state.get(f"tag_{i}", item["tag"])
-            txt_val = st.session_state.get(f"txt_{i}", item["text"])
-            reconstructed_srt.append(f"{i+1}\n{item['start_raw']} --> {item['end_raw']}\n{tag_val} {txt_val}\n")
-        
-        final_saved_srt = "\n".join(reconstructed_srt)
-        with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
-            f.write(final_saved_srt)
-        st.success("🎉 បានរក្សាទុក Script SRT រួចរាល់!")
+    # Save button Bottom
+    if st.button("💾 រក្សាទុកការកែប្រែ Script (Save Bottom)", type="primary", key="btn_save_bottom", use_container_width=True):
+        save_current_subtitles(sub_list)
         st.rerun()
 else:
     st.info("💡 មិនទាន់មាន Script SRT នៅឡើយទេ។ សូមចុចប៊ូតុងបកប្រែជាមួយ Gemini នៅខាងលើ។")
