@@ -124,6 +124,16 @@ def has_audio_stream(file_path):
     except Exception:
         return False
 
+def get_video_duration_ms(file_path):
+    try:
+        chk = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True
+        )
+        return int(float(chk.stdout.strip()) * 1000)
+    except Exception:
+        return 0
+
 def get_clean_tiktok_url(url):
     try:
         session = requests.Session()
@@ -279,7 +289,6 @@ def clean_speech_text(text):
 def parse_srt_to_list(srt_text):
     if not srt_text.strip():
         return []
-    # Enhanced robust parser
     pattern = re.compile(
         r'(?:(\d+)\s*\n)?'
         r'((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3})'
@@ -314,9 +323,13 @@ def generate_and_fit_audio(text, voice, out_path, target_ms):
     if os.path.exists(temp_raw):
         seg = AudioSegment.from_file(temp_raw)
         actual_ms = len(seg)
-        if target_ms <= 0: target_ms = actual_ms
-        factor = max(0.6, min(1.8, actual_ms / target_ms))
-        if abs(factor - 1.0) > 0.05:
+        if target_ms <= 0:
+            target_ms = actual_ms
+        
+        # បង្កើនល្បឿន atempo ប្រសិនបើសំឡេងអានវែងជាង Timecode
+        factor = actual_ms / target_ms
+        if factor > 1.05: # ប្រសិនបើវែងជាង ៥% ឡើងទៅ ត្រូវបង្កើនល្បឿន
+            factor = min(2.0, factor)
             subprocess.run(["ffmpeg", "-y", "-i", temp_raw, "-filter:a", f"atempo={factor:.2f}", out_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             if os.path.exists(temp_raw): os.remove(temp_raw)
         else:
@@ -387,6 +400,10 @@ st.divider()
 # 3. Interactive Video Player + Compact Subtitle Rows
 st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT")
 
+if st.session_state.get("just_saved", False):
+    st.success("✅ បានរក្សាទុកការកែប្រែ Script SRT ជោគជ័យ ១០០%!")
+    st.session_state["just_saved"] = False
+
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 
 if os.path.exists(video_input_path):
@@ -423,10 +440,11 @@ def save_current_subtitles(items_data):
     final_saved_srt = "\n".join(reconstructed_srt)
     with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f:
         f.write(final_saved_srt)
+    st.session_state["just_saved"] = True
     st.toast("✅ បានរក្សាទុកការកែប្រែ Script ជោគជ័យ!", icon="💾")
 
 if sub_list:
-    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ** (Scroll បានពេញលេញ):")
+    st.markdown(f"#### 📋 រកឃើញសរុប **{len(sub_list)} ជួរ**")
     
     # Save button Top
     if st.button("💾 រក្សាទុកការកែប្រែ Script (Save Top)", type="primary", key="btn_save_top", use_container_width=True):
@@ -435,18 +453,13 @@ if sub_list:
 
     st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
 
-    # Clean, Compact Subtitle Row Display
     for i, item in enumerate(sub_list):
-        gender_icon = "👩" if item["tag"] == "(female)" else "👨"
-        
-        # Timecode Header
         st.markdown(f"""
             <div class="time-header">
                 #{i+1} [{item['start_raw']} ➔ {item['end_raw']}]
             </div>
         """, unsafe_allow_html=True)
         
-        # Compact Column Ratio: 0.8 (Gender Dropdown) vs 4.2 (Text Input)
         c_tag, c_txt = st.columns([0.8, 4.2])
         with c_tag:
             st.selectbox(
@@ -479,7 +492,7 @@ v_choice = st.selectbox("🎙️ សំឡេងអាន៖", ["🤖 អូត�
 
 st.divider()
 
-# 4. Step 1: TTS Audio Generation
+# 4. Step 1: TTS Audio Generation (Exact Millisecond Overlay Sync)
 st.subheader("🔊 ៤. ជំហានទី ១៖ បង្កើតសំឡេង Auto-Sync (TTS)")
 if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync (MP3)", type="primary", use_container_width=True):
     fresh_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
@@ -491,16 +504,19 @@ if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេ�
         st.markdown(f"### 📊 រកឃើញសរុប **{total} ជួរ**")
         
         if total > 0:
-            combined = AudioSegment.silent(duration=0)
-            current_ms = 0
+            # កំណត់ប្រវែង Audio សរុបស្មើនឹងវីដេអូដើម ឬជួរចុងក្រោយ
+            vid_dur_ms = get_video_duration_ms(video_input_path) if os.path.exists(video_input_path) else 0
+            max_item_end = max(it["end"] for it in parsed_items)
+            total_duration_ms = max(vid_dur_ms, max_item_end + 1000)
+            
+            # បង្កើតផ្ទាំង Base សំឡេងស្ងាត់
+            combined = AudioSegment.silent(duration=total_duration_ms)
+            
             prog = st.progress(0)
             status = st.empty()
             
             for idx, it in enumerate(parsed_items):
                 status.text(f"⚡ កំពុង Sync ជួរទី {idx+1}/{total}: {it['text'][:25]}...")
-                if it["start"] > current_ms:
-                    combined += AudioSegment.silent(duration=it["start"] - current_ms)
-                    current_ms = it["start"]
                 
                 v = "km-KH-PisethNeural"
                 if "🤖" in v_choice or "អូតូ" in v_choice:
@@ -510,19 +526,20 @@ if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេ�
                     v = "km-KH-SreymomNeural"
 
                 temp_f = f"temp_{idx}.mp3"
+                target_duration = it["end"] - it["start"]
                 try:
-                    generate_and_fit_audio(it["text"], v, temp_f, it["end"] - it["start"])
+                    generate_and_fit_audio(it["text"], v, temp_f, target_duration)
                     if os.path.exists(temp_f):
                         seg = AudioSegment.from_file(temp_f)
-                        combined += seg
-                        current_ms += len(seg)
+                        # បិទសំឡេងចំម៉ោងពិតប្រាកដ (Absolute Timestamp Overlay) មិនឱ្យរុញម៉ោងជួរក្រោយឡើយ
+                        combined = combined.overlay(seg, position=it["start"])
                         os.remove(temp_f)
                 except Exception: 
                     pass
                 prog.progress(int((idx + 1) / total * 100))
                 
             combined.export(raw_khmer_audio, format="mp3")
-            status.success(f"🎉 បង្កើតសំឡេង Auto-Sync គ្រប់ {total} ជួររួចរាល់!")
+            status.success(f"🎉 បង្កើតសំឡេង Auto-Sync គ្រប់ {total} ជួរត្រឹមត្រូវតាមម៉ោងវីដេអូ!")
             st.rerun()
         else:
             st.error("❌ មិនអាច Parse SRT បានទេ! សូមពិនិត្យមើលទម្រង់ម៉ោង។")
@@ -554,6 +571,7 @@ if st.button("🚀 Render Video + Audio Only", type="primary", use_container_wid
             "-c:a", "aac",
             "-map", "0:v:0",
             "-map", "1:a:0",
+            "-shortest",
             final_video_no_sub
         ]
         subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
@@ -564,3 +582,4 @@ if os.path.exists(final_video_no_sub):
     st.video(final_video_no_sub)
     with open(final_video_no_sub, "rb") as vf1:
         st.download_button("📥 Download Video Final", vf1, file_name="dubbed_video_audio_only.mp4", use_container_width=True)
+    
