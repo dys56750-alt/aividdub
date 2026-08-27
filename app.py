@@ -96,7 +96,7 @@ st.title("🎬 Khmer Dubbing Studio Pro")
 
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ស្វ័យប្រវត្តិ៖ បញ្ចូល Link ➔ អូតូទាញយក ➔ អូតូ Gemini បកប្រែ ➔ អូតូ Sync & Render")
+    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini 3.6 Pro បកប្រែ ➔ ៣. ផ្ទៀងផ្ទាត់ ➔ ៤. Auto-Sync & Render")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
@@ -209,7 +209,7 @@ def download_video_all(url, out_path):
 
     return False, "មិនអាចទាញយកបានទេ សូម Upload File MP4"
 
-def generate_khmer_dub_srt(audio_path: str, api_key: str, model_name: str = "gemini-3.6-flash") -> str:
+def generate_khmer_dub_srt_pro(audio_path: str, api_key: str) -> str:
     client = genai.Client(api_key=api_key)
     uploaded_audio = client.files.upload(file=audio_path)
 
@@ -234,20 +234,30 @@ Example Format:
 00:00:03,600 --> 00:00:05,200
 (man) បាទ ខ្ញុំសុខសប្បាយទេ។
 """
-    response = client.models.generate_content(
-        model=model_name,
-        contents=[prompt, uploaded_audio],
-    )
+    # ប្រើ gemini-3.6-pro ជាម៉ូដែលដើមចម្បង
+    candidate_models = ["gemini-3.6-pro", "gemini-3.6-flash"]
+    last_error = None
 
-    try:
-        client.files.delete(name=uploaded_audio.name)
-    except Exception:
-        pass
+    for m_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=m_name,
+                contents=[prompt, uploaded_audio],
+            )
+            try: client.files.delete(name=uploaded_audio.name)
+            except Exception: pass
 
-    raw_text = getattr(response, "text", "").strip()
-    cleaned_srt = re.sub(r"^\s*```(?:srt|text)?\s*", "", raw_text, flags=re.I)
-    cleaned_srt = re.sub(r"\s*```\s*$", "", cleaned_srt).strip()
-    return cleaned_srt
+            raw_text = getattr(response, "text", "").strip()
+            cleaned_srt = re.sub(r"^\s*```(?:srt|text)?\s*", "", raw_text, flags=re.I)
+            cleaned_srt = re.sub(r"\s*```\s*$", "", cleaned_srt).strip()
+            return cleaned_srt
+        except Exception as err:
+            last_error = err
+            continue
+
+    try: client.files.delete(name=uploaded_audio.name)
+    except Exception: pass
+    raise last_error
 
 def parse_time_to_ms(t):
     t = t.replace(',', '.').strip()
@@ -337,14 +347,14 @@ def process_gemini_translation(api_key, status_container):
         return False
     
     try:
-        status_container.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរស្វ័យប្រវត្តិ...")
-        srt_output = generate_khmer_dub_srt(extracted_mp3_path, api_key)
+        status_container.info("✨ Gemini 3.6 Pro កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរ...")
+        srt_output = generate_khmer_dub_srt_pro(extracted_mp3_path, api_key)
         with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
             f.write(srt_output)
-        status_container.success("🎉 Gemini 3.6 Flash បានបកប្រែរួចរាល់ពេញលេញ!")
+        status_container.success("🎉 Gemini 3.6 Pro បានបកប្រែរួចរាល់ពេញលេញ!")
         return True
     except Exception as e:
-        status_container.error(f"❌ កំហុស Gemini៖ {e}")
+        status_container.error(f"❌ កំហុស Gemini ({e})។ វីដេអូបានរក្សាទុកលើ Server រួចហើយ សូមចុចប៊ូតុង Retry ខាងក្រោមដើម្បីសាកល្បងម្ដងទៀត។")
         return False
 
 # 2. Video Source
@@ -353,7 +363,7 @@ input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវី�
 
 if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
     url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://vt.tiktok.com/](https://vt.tiktok.com/)... ឬ [https://youtube.com/](https://youtube.com/)...")
-    if st.button("📥 ទាញយក & អូតូបកប្រែជាមួយ Gemini", type="secondary"):
+    if st.button("📥 ទាញយក & អូតូបកប្រែជាមួយ Gemini 3.6 Pro", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
         elif not gemini_key.strip():
@@ -365,10 +375,8 @@ if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
             ok, msg = download_video_all(url_in.strip(), video_input_path)
             if ok:
                 st_box.success("🎉 ទាញយកវីដេអូជោគជ័យ!")
-                # អូតូស្ដាប់ និងបកប្រែជាមួយ Gemini ភ្លាមៗ
-                trans_ok = process_gemini_translation(gemini_key.strip(), st_box)
-                if trans_ok:
-                    st.rerun()
+                process_gemini_translation(gemini_key.strip(), st_box)
+                st.rerun()
             else: 
                 st_box.error(f"❌ {msg}")
 else:
@@ -385,16 +393,14 @@ else:
 
 st.divider()
 
-# 3. Interactive Video Player + Compact Subtitle Rows
+# 3. Interactive Video Player + Editable Subtitles
 st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT")
 
 if st.session_state.get("just_saved", False):
     st.success("✅ បានរក្សាទុកការកែប្រែ Script SRT ជោគជ័យ ១០០%!")
     st.session_state["just_saved"] = False
 
-cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
-
-# Embed Player
+# Video Player
 if os.path.exists(video_input_path):
     with open(video_input_path, "rb") as vf:
         video_b64 = base64.b64encode(vf.read()).decode()
@@ -417,7 +423,19 @@ if os.path.exists(video_input_path):
     """
     st.components.v1.html(player_html, height=450)
 
+cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 sub_list = parse_srt_to_list(cur_script)
+
+# Retry Gemini Button
+if os.path.exists(video_input_path) and not sub_list:
+    st.warning("⚠️ វីដេអូមានលើ Server រួចហើយ ប៉ុន្តែមិនទាន់មាន Script SRT (អាចបណ្ដាលមកពី Gemini Server 503)។")
+    if st.button("🔄 សាកល្បងបកប្រែម្ដងទៀតជាមួយ Gemini 3.6 Pro (Retry)", type="primary", use_container_width=True):
+        if not gemini_key.strip():
+            st.error("❌ សូមបញ្ចូល Gemini API Key ជាមុនសិន!")
+        else:
+            retry_box = st.empty()
+            if process_gemini_translation(gemini_key.strip(), retry_box):
+                st.rerun()
 
 def save_current_subtitles(items_data):
     reconstructed_srt = []
@@ -472,8 +490,8 @@ if sub_list:
     if st.button("💾 រក្សាទុកការកែប្រែ Script (Save Bottom)", type="primary", key="btn_save_bottom", use_container_width=True):
         save_current_subtitles(sub_list)
         st.rerun()
-else:
-    st.info("💡 មិនទាន់មាន Script SRT នៅឡើយទេ។ សូមបញ្ចូលវីដេអូដើម្បីឱ្យប្រព័ន្ធទាញយក និងបកប្រែស្វ័យប្រវត្តិ។")
+elif not os.path.exists(video_input_path):
+    st.info("💡 សូមបញ្ចូល Link ឬ Upload វីដេអូដើម្បីឱ្យប្រព័ន្ធទាញយក និងបកប្រែស្វ័យប្រវត្តិ។")
 
 st.divider()
 
@@ -553,7 +571,7 @@ if st.button("🚀 ចាប់ផ្ដើមបង្កើតសំឡេង 
         else:
             st.error("❌ មិនអាច Parse SRT បានទេ! សូមពិនិត្យមើលទម្រង់ម៉ោង។")
 
-# លទ្ធផលវីដេអូ Final
+# Final Video Output
 if os.path.exists(final_video_no_sub):
     st.markdown("#### 🎬 វីដេអូបញ្ចូលសំឡេងខ្មែររួចរាល់ (Dubbed Video Final)")
     st.video(final_video_no_sub)
@@ -562,9 +580,10 @@ if os.path.exists(final_video_no_sub):
 
 st.divider()
 
-# លទ្ធផលសំឡេង MP3 សុទ្ធ
+# Audio Only Output
 if os.path.exists(raw_khmer_audio):
     st.markdown("#### 🎵 សំឡេងអានខ្មែរ Auto-Sync សុទ្ធ (MP3 Audio Only)")
     st.audio(raw_khmer_audio, format="audio/mp3")
     with open(raw_khmer_audio, "rb") as af:
         st.download_button("📥 ទាញយក File MP3 សុទ្ធ (.mp3)", af, file_name="khmer_audio_synced.mp3", use_container_width=True)
+            
