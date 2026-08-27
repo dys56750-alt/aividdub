@@ -18,7 +18,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="Khmer Dubbing Studio Pro", layout="wide")
 
-# Custom UI Styling for Compact Elements
+# Custom UI Styling
 st.markdown("""
     <style>
     div[data-baseweb="input"] input {
@@ -94,10 +94,9 @@ def hard_reset_all():
 
 st.title("🎬 Khmer Dubbing Studio Pro")
 
-# Storage Info Bar
 col_info, col_reset = st.columns([2.5, 1.5])
 with col_info:
-    st.info("💡 ដំណើរការ៖ ១. បញ្ចូលវីដេអូ ➔ ២. Gemini បកប្រែ Script ➔ ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល ➔ ៤. Render")
+    st.info("💡 ស្វ័យប្រវត្តិ៖ បញ្ចូល Link ➔ អូតូទាញយក ➔ អូតូ Gemini បកប្រែ ➔ អូតូ Sync & Render")
 with col_reset:
     used_mb = get_dir_size_mb()
     st.metric(label="💾 Disk Usage", value=f"{used_mb:.1f} MB")
@@ -113,16 +112,6 @@ st.subheader("🔑 ១. បញ្ចូល Gemini API Key")
 gemini_key = st.text_input("🔑 Gemini API Key:", type="password", value="")
 
 st.divider()
-
-def has_audio_stream(file_path):
-    try:
-        chk = subprocess.run(
-            ["ffprobe", "-i", file_path, "-show_streams", "-select_streams", "a", "-loglevel", "error"],
-            capture_output=True, text=True
-        )
-        return bool(chk.stdout.strip())
-    except Exception:
-        return False
 
 def get_video_duration_ms(file_path):
     try:
@@ -326,15 +315,37 @@ def generate_and_fit_audio(text, voice, out_path, target_ms):
         if target_ms <= 0:
             target_ms = actual_ms
         
-        # បង្កើនល្បឿន atempo ប្រសិនបើសំឡេងអានវែងជាង Timecode
         factor = actual_ms / target_ms
-        if factor > 1.05: # ប្រសិនបើវែងជាង ៥% ឡើងទៅ ត្រូវបង្កើនល្បឿន
-            factor = min(2.0, factor)
+        if factor > 1.25:
+            factor = min(1.4, factor)
             subprocess.run(["ffmpeg", "-y", "-i", temp_raw, "-filter:a", f"atempo={factor:.2f}", out_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             if os.path.exists(temp_raw): os.remove(temp_raw)
         else:
             if os.path.exists(out_path): os.remove(out_path)
             os.rename(temp_raw, out_path)
+
+def process_gemini_translation(api_key, status_container):
+    status_container.info("⏳ កំពុងបន្សុទ្ធសំឡេង (16kHz Mono)...")
+    subprocess.run([
+        "ffmpeg", "-y", "-i", video_input_path,
+        "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k",
+        extracted_mp3_path
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    if not os.path.exists(extracted_mp3_path) or os.path.getsize(extracted_mp3_path) < 1000:
+        status_container.error("❌ មិនអាចទាញយកសំឡេងពីវីដេអូបានទេ!")
+        return False
+    
+    try:
+        status_container.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរស្វ័យប្រវត្តិ...")
+        srt_output = generate_khmer_dub_srt(extracted_mp3_path, api_key)
+        with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
+            f.write(srt_output)
+        status_container.success("🎉 Gemini 3.6 Flash បានបកប្រែរួចរាល់ពេញលេញ!")
+        return True
+    except Exception as e:
+        status_container.error(f"❌ កំហុស Gemini៖ {e}")
+        return False
 
 # 2. Video Source
 st.subheader("📥 ២. ប្រភពវីដេអូដើម")
@@ -342,9 +353,11 @@ input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវី�
 
 if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
     url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://vt.tiktok.com/](https://vt.tiktok.com/)... ឬ [https://youtube.com/](https://youtube.com/)...")
-    if st.button("📥 ទាញយកវីដេអូដើម", type="secondary"):
+    if st.button("📥 ទាញយក & អូតូបកប្រែជាមួយ Gemini", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
+        elif not gemini_key.strip():
+            st.error("❌ សូមបញ្ចូល Gemini API Key នៅជំហានទី ១ ជាមុនសិន!")
         else:
             if os.path.exists(CACHE_SCRIPT_FILE): os.remove(CACHE_SCRIPT_FILE)
             st_box = st.empty()
@@ -352,48 +365,23 @@ if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
             ok, msg = download_video_all(url_in.strip(), video_input_path)
             if ok:
                 st_box.success("🎉 ទាញយកវីដេអូជោគជ័យ!")
-                st.rerun()
+                # អូតូស្ដាប់ និងបកប្រែជាមួយ Gemini ភ្លាមៗ
+                trans_ok = process_gemini_translation(gemini_key.strip(), st_box)
+                if trans_ok:
+                    st.rerun()
             else: 
                 st_box.error(f"❌ {msg}")
 else:
     up_v = st.file_uploader("📂 Upload File MP4 វីដេអូដើម", type=["mp4", "mov"])
     if up_v:
-        if os.path.exists(CACHE_SCRIPT_FILE): os.remove(CACHE_SCRIPT_FILE)
-        with open(video_input_path, "wb") as f: f.write(up_v.read())
-        st.success("✅ បាន Upload រួចរាល់!")
-
-if os.path.exists(video_input_path):
-    col_vid_del, col_vid_ai = st.columns([1, 3])
-    with col_vid_del:
-        if st.button("🗑️ លុបវីដេអូនេះ", use_container_width=True):
-            if os.path.exists(video_input_path): os.remove(video_input_path)
-            st.rerun()
-            
-    with col_vid_ai:
-        if st.button("✨ ប្រើ Gemini 3.6 Flash ស្ដាប់វីដេអូ ➔ បកប្រែជា Khmer SRT", type="primary", use_container_width=True):
-            if not gemini_key.strip(): 
-                st.error("❌ សូមបញ្ចូល Gemini API Key!")
-            else:
-                st_box = st.empty()
-                st_box.info("⏳ កំពុងបន្សុទ្ធសំឡេង (16kHz Mono)...")
-                subprocess.run([
-                    "ffmpeg", "-y", "-i", video_input_path,
-                    "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k",
-                    extracted_mp3_path
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                if not os.path.exists(extracted_mp3_path) or os.path.getsize(extracted_mp3_path) < 1000:
-                    st_box.error("❌ មិនអាចទាញយកសំឡេងបានទេ!")
-                else:
-                    try:
-                        st_box.info("✨ Gemini 3.6 Flash កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរ...")
-                        srt_output = generate_khmer_dub_srt(extracted_mp3_path, gemini_key.strip())
-                        with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
-                            f.write(srt_output)
-                        st_box.success("🎉 Gemini 3.6 Flash បានបកប្រែរួចរាល់ពេញលេញ!")
-                        st.rerun()
-                    except Exception as e: 
-                        st_box.error(f"❌ កំហុស Gemini៖ {e}")
+        if not gemini_key.strip():
+            st.warning("⚠️ សូមបញ្ចូល Gemini API Key នៅជំហានទី ១ ដើម្បីឱ្យវាបកប្រែស្វ័យប្រវត្តិ។")
+        if not os.path.exists(video_input_path) or os.path.getsize(video_input_path) != up_v.size:
+            with open(video_input_path, "wb") as f: f.write(up_v.read())
+            if gemini_key.strip():
+                st_box_up = st.empty()
+                process_gemini_translation(gemini_key.strip(), st_box_up)
+                st.rerun()
 
 st.divider()
 
@@ -406,6 +394,7 @@ if st.session_state.get("just_saved", False):
 
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 
+# Embed Player
 if os.path.exists(video_input_path):
     with open(video_input_path, "rb") as vf:
         video_b64 = base64.b64encode(vf.read()).decode()
@@ -484,7 +473,7 @@ if sub_list:
         save_current_subtitles(sub_list)
         st.rerun()
 else:
-    st.info("💡 មិនទាន់មាន Script SRT នៅឡើយទេ។ សូមចុចប៊ូតុងបកប្រែជាមួយ Gemini នៅខាងលើ។")
+    st.info("💡 មិនទាន់មាន Script SRT នៅឡើយទេ។ សូមបញ្ចូលវីដេអូដើម្បីឱ្យប្រព័ន្ធទាញយក និងបកប្រែស្វ័យប្រវត្តិ។")
 
 st.divider()
 
@@ -492,24 +481,25 @@ v_choice = st.selectbox("🎙️ សំឡេងអាន៖", ["🤖 អូត�
 
 st.divider()
 
-# 4. Step 1: TTS Audio Generation (Exact Millisecond Overlay Sync)
-st.subheader("🔊 ៤. ជំហានទី ១៖ បង្កើតសំឡេង Auto-Sync (TTS)")
-if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync (MP3)", type="primary", use_container_width=True):
+# 4. Auto-Sync & Auto-Render Final Video
+st.subheader("🔊 ៤. បង្កើតសំឡេង Auto-Sync & Auto-Render វីដេអូ")
+
+if st.button("🚀 ចាប់ផ្ដើមបង្កើតសំឡេង Auto-Sync & Auto-Render វីដេអូ", type="primary", use_container_width=True):
     fresh_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
     if not fresh_script.strip(): 
         st.error("សូមបញ្ចូល Script SRT!")
+    elif not os.path.exists(video_input_path):
+        st.error("❌ មិនទាន់មានវីដេអូដើមទេ!")
     else:
         parsed_items = parse_srt_to_list(fresh_script)
         total = len(parsed_items)
         st.markdown(f"### 📊 រកឃើញសរុប **{total} ជួរ**")
         
         if total > 0:
-            # កំណត់ប្រវែង Audio សរុបស្មើនឹងវីដេអូដើម ឬជួរចុងក្រោយ
-            vid_dur_ms = get_video_duration_ms(video_input_path) if os.path.exists(video_input_path) else 0
+            vid_dur_ms = get_video_duration_ms(video_input_path)
             max_item_end = max(it["end"] for it in parsed_items)
             total_duration_ms = max(vid_dur_ms, max_item_end + 1000)
             
-            # បង្កើតផ្ទាំង Base សំឡេងស្ងាត់
             combined = AudioSegment.silent(duration=total_duration_ms)
             
             prog = st.progress(0)
@@ -531,55 +521,50 @@ if st.button("🎙️ ចាប់ផ្ដើមបង្កើតសំឡេ�
                     generate_and_fit_audio(it["text"], v, temp_f, target_duration)
                     if os.path.exists(temp_f):
                         seg = AudioSegment.from_file(temp_f)
-                        # បិទសំឡេងចំម៉ោងពិតប្រាកដ (Absolute Timestamp Overlay) មិនឱ្យរុញម៉ោងជួរក្រោយឡើយ
                         combined = combined.overlay(seg, position=it["start"])
                         os.remove(temp_f)
                 except Exception: 
                     pass
                 prog.progress(int((idx + 1) / total * 100))
                 
+            if vid_dur_ms > 0 and len(combined) > vid_dur_ms:
+                combined = combined[:vid_dur_ms]
+            elif vid_dur_ms > 0 and len(combined) < vid_dur_ms:
+                combined += AudioSegment.silent(duration=(vid_dur_ms - len(combined)))
+
             combined.export(raw_khmer_audio, format="mp3")
-            status.success(f"🎉 បង្កើតសំឡេង Auto-Sync គ្រប់ {total} ជួរត្រឹមត្រូវតាមម៉ោងវីដេអូ!")
+            
+            # Auto-Render វីដេអូ Dubbed
+            status.text("⏳ កំពុង Auto-Render វីដេអូ Dubbed ជាមួយសំឡេងខ្មែរ...")
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-i", video_input_path,
+                "-i", raw_khmer_audio,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                final_video_no_sub
+            ]
+            subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            
+            status.success(f"🎉 បង្កើតសំឡេង Auto-Sync និង Auto-Render វីដេអូពេញលេញរួចរាល់!")
             st.rerun()
         else:
             st.error("❌ មិនអាច Parse SRT បានទេ! សូមពិនិត្យមើលទម្រង់ម៉ោង។")
 
-if os.path.exists(raw_khmer_audio):
-    st.audio(raw_khmer_audio, format="audio/mp3")
-    with open(raw_khmer_audio, "rb") as af:
-        st.download_button("📥 ទាញយក File MP3 សុទ្ធ", af, file_name="khmer_audio_synced.mp3")
+# លទ្ធផលវីដេអូ Final
+if os.path.exists(final_video_no_sub):
+    st.markdown("#### 🎬 វីដេអូបញ្ចូលសំឡេងខ្មែររួចរាល់ (Dubbed Video Final)")
+    st.video(final_video_no_sub)
+    with open(final_video_no_sub, "rb") as vf1:
+        st.download_button("📥 Download Dubbed Video Final (.mp4)", vf1, file_name="dubbed_video_final.mp4", type="primary", use_container_width=True)
 
 st.divider()
 
-# 5. Step 2: Super Fast Render
-st.subheader("🎬 ៥. ជំហានទី ២៖ Render វីដេអូ + សំឡេង")
-
-if st.button("🚀 Render Video + Audio Only", type="primary", use_container_width=True):
-    if not os.path.exists(video_input_path):
-        st.error("❌ មិនទាន់មានវីដេអូដើមទេ!")
-    elif not os.path.exists(raw_khmer_audio):
-        st.error("❌ សូមចុចបង្កើតសំឡេង (ជំហានទី ៤) ជាមុនសិន!")
-    else:
-        status_box = st.empty()
-        status_box.info("⏳ កំពុង Merge សំឡេងចូលវីដេអូ...")
-        
-        ffmpeg_cmd = [
-            "ffmpeg", "-y",
-            "-i", video_input_path,
-            "-i", raw_khmer_audio,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-            final_video_no_sub
-        ]
-        subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        status_box.success("🎉 Render វីដេអូ + សំឡេងសុទ្ធ រួចរាល់!")
-        st.rerun()
-
-if os.path.exists(final_video_no_sub):
-    st.video(final_video_no_sub)
-    with open(final_video_no_sub, "rb") as vf1:
-        st.download_button("📥 Download Video Final", vf1, file_name="dubbed_video_audio_only.mp4", use_container_width=True)
-    
+# លទ្ធផលសំឡេង MP3 សុទ្ធ
+if os.path.exists(raw_khmer_audio):
+    st.markdown("#### 🎵 សំឡេងអានខ្មែរ Auto-Sync សុទ្ធ (MP3 Audio Only)")
+    st.audio(raw_khmer_audio, format="audio/mp3")
+    with open(raw_khmer_audio, "rb") as af:
+        st.download_button("📥 ទាញយក File MP3 សុទ្ធ (.mp3)", af, file_name="khmer_audio_synced.mp3", use_container_width=True)
