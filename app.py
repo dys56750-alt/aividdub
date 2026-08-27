@@ -18,7 +18,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="Khmer Dubbing Studio Pro", layout="wide")
 
-# Custom UI Styling
+# Custom UI Styling for Speed & Compact Elements
 st.markdown("""
     <style>
     div[data-baseweb="input"] input {
@@ -45,7 +45,7 @@ st.markdown("""
         color: #28a745;
         font-size: 14px;
         font-weight: bold;
-        margin-top: 10px;
+        margin-top: 8px;
         margin-bottom: 2px;
     }
     </style>
@@ -234,8 +234,7 @@ Example Format:
 00:00:03,600 --> 00:00:05,200
 (man) បាទ ខ្ញុំសុខសប្បាយទេ។
 """
-    # ប្រើ gemini-3.6-pro ជាម៉ូដែលដើមចម្បង
-    candidate_models = ["gemini-3.6-pro", "gemini-3.6-flash"]
+    candidate_models = ["gemini-3.6-pro", "gemini-3.6-flash", "gemini-2.5-flash"]
     last_error = None
 
     for m_name in candidate_models:
@@ -335,7 +334,7 @@ def generate_and_fit_audio(text, voice, out_path, target_ms):
             os.rename(temp_raw, out_path)
 
 def process_gemini_translation(api_key, status_container):
-    status_container.info("⏳ កំពុងបន្សុទ្ធសំឡេង (16kHz Mono)...")
+    status_container.info("⏳ ជំហានទី ១/២៖ កំពុងបន្សុទ្ធសំឡេង (16kHz Mono)...")
     subprocess.run([
         "ffmpeg", "-y", "-i", video_input_path,
         "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k",
@@ -347,7 +346,7 @@ def process_gemini_translation(api_key, status_container):
         return False
     
     try:
-        status_container.info("✨ Gemini 3.6 Pro កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរ...")
+        status_container.info("✨ ជំហានទី ២/២៖ Gemini 3.6 Pro កំពុងស្ដាប់ & បកប្រែជាភាសាខ្មែរ...")
         srt_output = generate_khmer_dub_srt_pro(extracted_mp3_path, api_key)
         with open(CACHE_SCRIPT_FILE, "w", encoding="utf-8") as f: 
             f.write(srt_output)
@@ -362,7 +361,7 @@ st.subheader("📥 ២. ប្រភពវីដេអូដើម")
 input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវីដេអូ៖", ["🔗 URL Link (TikTok/Dailymotion/FB/YouTube)", "📂 Upload File MP4"], key="v_opt")
 
 if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
-    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://vt.tiktok.com/](https://vt.tiktok.com/)... ឬ [https://youtube.com/](https://youtube.com/)...")
+    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="https://vt.tiktok.com/... ឬ https://youtube.com/...")
     if st.button("📥 ទាញយក & អូតូបកប្រែជាមួយ Gemini 3.6 Pro", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
@@ -371,13 +370,15 @@ if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
         else:
             if os.path.exists(CACHE_SCRIPT_FILE): os.remove(CACHE_SCRIPT_FILE)
             st_box = st.empty()
-            st_box.info("⏳ កំពុងទាញយកវីដេអូ...")
+            st_box.info("⏳ កំពុងទាញយកវីដេអូចូល Server...")
             ok, msg = download_video_all(url_in.strip(), video_input_path)
             if ok:
-                st_box.success("🎉 ទាញយកវីដេអូជោគជ័យ!")
+                st.toast("🎉 ទាញយកវីដេអូចូល Server ជោគជ័យ!", icon="✅")
+                st_box.success("✅ ទាញយកវីដេអូជោគជ័យ! កំពុងចាប់ផ្ដើមបកប្រែ...")
                 process_gemini_translation(gemini_key.strip(), st_box)
                 st.rerun()
             else: 
+                st.toast(f"❌ បរាជ័យក្នុងការទាញយក៖ {msg}", icon="🚨")
                 st_box.error(f"❌ {msg}")
 else:
     up_v = st.file_uploader("📂 Upload File MP4 វីដេអូដើម", type=["mp4", "mov"])
@@ -386,6 +387,7 @@ else:
             st.warning("⚠️ សូមបញ្ចូល Gemini API Key នៅជំហានទី ១ ដើម្បីឱ្យវាបកប្រែស្វ័យប្រវត្តិ។")
         if not os.path.exists(video_input_path) or os.path.getsize(video_input_path) != up_v.size:
             with open(video_input_path, "wb") as f: f.write(up_v.read())
+            st.toast("✅ បាន Upload វីដេអូជោគជ័យ!", icon="🎉")
             if gemini_key.strip():
                 st_box_up = st.empty()
                 process_gemini_translation(gemini_key.strip(), st_box_up)
@@ -393,40 +395,21 @@ else:
 
 st.divider()
 
-# 3. Interactive Video Player + Editable Subtitles
+# 3. Fast Video Player + Subtitle Editor
 st.subheader("📝 ៣. ផ្ទៀងផ្ទាត់ & កែសម្រួល Script SRT")
 
 if st.session_state.get("just_saved", False):
     st.success("✅ បានរក្សាទុកការកែប្រែ Script SRT ជោគជ័យ ១០០%!")
     st.session_state["just_saved"] = False
 
-# Video Player
+# Fast Native Video Player
 if os.path.exists(video_input_path):
-    with open(video_input_path, "rb") as vf:
-        video_b64 = base64.b64encode(vf.read()).decode()
-    
-    player_html = f"""
-    <div style="background:#000; padding:10px; border-radius:10px; margin-bottom:15px; border:1px solid #333; text-align:center;">
-        <video id="syncPlayer" controls style="width:100%; max-height:420px; border-radius:8px; background:#000;">
-            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-        </video>
-    </div>
-    <script>
-        function seekVideo(timeSec) {{
-            var v = document.getElementById('syncPlayer');
-            if (v) {{
-                v.currentTime = timeSec;
-                v.play();
-            }}
-        }}
-    </script>
-    """
-    st.components.v1.html(player_html, height=450)
+    st.video(video_input_path)
 
 cur_script = open(CACHE_SCRIPT_FILE, 'r', encoding='utf-8').read() if os.path.exists(CACHE_SCRIPT_FILE) else ""
 sub_list = parse_srt_to_list(cur_script)
 
-# Retry Gemini Button
+# Retry Button
 if os.path.exists(video_input_path) and not sub_list:
     st.warning("⚠️ វីដេអូមានលើ Server រួចហើយ ប៉ុន្តែមិនទាន់មាន Script SRT (អាចបណ្ដាលមកពី Gemini Server 503)។")
     if st.button("🔄 សាកល្បងបកប្រែម្ដងទៀតជាមួយ Gemini 3.6 Pro (Retry)", type="primary", use_container_width=True):
@@ -586,4 +569,4 @@ if os.path.exists(raw_khmer_audio):
     st.audio(raw_khmer_audio, format="audio/mp3")
     with open(raw_khmer_audio, "rb") as af:
         st.download_button("📥 ទាញយក File MP3 សុទ្ធ (.mp3)", af, file_name="khmer_audio_synced.mp3", use_container_width=True)
-            
+                                           
