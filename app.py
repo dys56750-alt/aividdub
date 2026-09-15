@@ -125,11 +125,22 @@ def get_video_duration_ms(file_path):
 
 def get_clean_tiktok_url(url):
     try:
-        session = requests.Session()
-        res = session.get(url, allow_redirects=True, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
-        return res.url.split('?')[0]
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        res = requests.get(url, allow_redirects=True, timeout=12, headers=headers)
+        clean_url = res.url.split('?')[0]
+        return clean_url
     except Exception:
         return url
 
@@ -140,40 +151,61 @@ def download_video_all(url, out_path):
             try: os.remove(f)
             except Exception: pass
 
-    # 1. TikTok
+    # ========================================================
+    # ១. ដំណើរការសម្រាប់ TIKTOK (TikWM + SSSTik + yt-dlp)
+    # ========================================================
     if "tiktok.com" in url.lower() or "vt.tiktok" in url.lower():
         real_url = get_clean_tiktok_url(url)
-        try:
-            api_url = "https://www.tikwm.com/api/"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
-                'Accept': 'application/json'
-            }
-            res = requests.post(api_url, headers=headers, data={'url': real_url, 'count': 12, 'cursor': 0, 'web': 1, 'hd': 1}, timeout=15).json()
-            if res.get("code") == 0 and "data" in res:
-                v_url = res["data"].get("hdplay") or res["data"].get("play") or res["data"].get("wmplay")
-                if v_url:
-                    if not v_url.startswith("http"):
-                        v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
-                    rv = requests.get(v_url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=30)
-                    with open(out_path, "wb") as f:
-                        f.write(rv.content)
-                    if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-                        return True, "ជោគជ័យតាម TikWM"
-        except Exception:
-            pass
 
+        urls_to_try = [real_url]
+        if real_url != url:
+            urls_to_try.append(url)
+
+        # វិធីសាស្ត្រទី ១៖ TikWM API
+        for target_url in urls_to_try:
+            try:
+                api_url = "https://www.tikwm.com/api/"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Referer': 'https://www.tikwm.com/',
+                    'Origin': 'https://www.tikwm.com',
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                }
+                res = requests.post(api_url, headers=headers, data={'url': target_url, 'count': 12, 'cursor': 0, 'web': 1, 'hd': 1}, timeout=15).json()
+                
+                if res.get("code") == 0 and "data" in res:
+                    v_url = res["data"].get("play") or res["data"].get("hdplay") or res["data"].get("wmplay")
+                    if v_url:
+                        if not v_url.startswith("http"):
+                            v_url = "https://www.tikwm.com" + ("" if v_url.startswith("/") else "/") + v_url
+                        
+                        rv = requests.get(v_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}, verify=False, timeout=30)
+                        with open(out_path, "wb") as f:
+                            f.write(rv.content)
+                        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+                            return True, "ជោគជ័យតាម TikWM"
+            except Exception:
+                pass
+
+        # វិធីសាស្ត្រទី ២៖ SSSTik API
         try:
+            ss_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Referer': 'https://ssstik.io/en',
+                'Origin': 'https://ssstik.io'
+            }
             ss_res = requests.post(
                 "https://ssstik.io/abc?url=dl",
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
+                headers=ss_headers,
                 data={'id': real_url, 'locale': 'en', 'tt': 'none'},
                 timeout=15
             ).text
-            match = re.search(r'href="(https://[^"]+)" class="[^"]*download_link', ss_res)
+            
+            match = re.search(r'href="(https://[^"]+)"[^>]*class="[^"]*download_link', ss_res)
             if match:
                 dl_link = match.group(1)
-                rv = requests.get(dl_link, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=30)
+                rv = requests.get(dl_link, headers=ss_headers, verify=False, timeout=30)
                 with open(out_path, "wb") as f:
                     f.write(rv.content)
                 if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
@@ -181,9 +213,31 @@ def download_video_all(url, out_path):
         except Exception:
             pass
 
-        return False, "មិនអាចទាញយក TikTok បានទេ!"
+        # វិធីសាស្ត្រទី ៣៖ yt-dlp Fallback
+        try:
+            ydl_opts_tiktok = {
+                'format': 'best[ext=mp4]/best',
+                'outtmpl': out_path,
+                'quiet': True,
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
+            }
+            with yt_dlp.YoutubeDL(ydl_opts_tiktok) as ydl:
+                ydl.download([url])
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+                return True, "ជោគជ័យតាម yt-dlp"
+        except Exception:
+            pass
 
-    # 2. YouTube / Others
+        return False, "មិនអាចទាញយក TikTok បានទេ! សូមសាកល្បងម្ដងទៀត ឬ Upload File MP4 ជំនួសវិញ។"
+
+    # ========================================================
+    # ២. ដំណើរការសម្រាប់ YouTube / Dailymotion / FB
+    # ========================================================
     ydl_opts = {
         'format': 'best[ext=mp4]/bestvideo+bestaudio/best',
         'outtmpl': out_path,
@@ -192,7 +246,7 @@ def download_video_all(url, out_path):
         'no_warnings': True,
         'merge_output_format': 'mp4',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         },
         'extractor_args': {
             'youtube': {'player_client': ['android', 'ios', 'web']}
@@ -361,7 +415,7 @@ st.subheader("📥 ២. ប្រភពវីដេអូដើម")
 input_opt = st.radio("វិធីសាស្ត្របញ្ចូលវីដេអូ៖", ["🔗 URL Link (TikTok/Dailymotion/FB/YouTube)", "📂 Upload File MP4"], key="v_opt")
 
 if input_opt == "🔗 URL Link (TikTok/Dailymotion/FB/YouTube)":
-    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="https://vt.tiktok.com/... ឬ https://youtube.com/...")
+    url_in = st.text_input("🔗 បញ្ចូល Link វីដេអូ៖", placeholder="[https://vt.tiktok.com/](https://vt.tiktok.com/)... ឬ [https://youtube.com/](https://youtube.com/)...")
     if st.button("📥 ទាញយក & អូតូបកប្រែជាមួយ Gemini 3.6 Pro", type="secondary"):
         if not url_in.strip(): 
             st.error("សូមបញ្ចូល URL!")
@@ -402,7 +456,7 @@ if st.session_state.get("just_saved", False):
     st.success("✅ បានរក្សាទុកការកែប្រែ Script SRT ជោគជ័យ ១០០%!")
     st.session_state["just_saved"] = False
 
-# Fast Native Video Player
+# Native Fast Video Player
 if os.path.exists(video_input_path):
     st.video(video_input_path)
 
@@ -569,4 +623,3 @@ if os.path.exists(raw_khmer_audio):
     st.audio(raw_khmer_audio, format="audio/mp3")
     with open(raw_khmer_audio, "rb") as af:
         st.download_button("📥 ទាញយក File MP3 សុទ្ធ (.mp3)", af, file_name="khmer_audio_synced.mp3", use_container_width=True)
-                                           
