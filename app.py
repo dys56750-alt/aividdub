@@ -289,7 +289,8 @@ Example Format:
 (man) បាទ ខ្ញុំសុខសប្បាយទេ។
 """
     # ធ្វើបច្ចុប្បន្នភាពទៅជំនាន់ Gemini 3.8 ចុងក្រោយបង្អស់តាមការណែនាំរបស់ Google API
-    candidate_models = ["gemini-3.8-flash", "gemini-3.8-pro"]
+        candidate_models = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
     last_error = None
 
     for m_name in candidate_models:
