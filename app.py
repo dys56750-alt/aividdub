@@ -282,7 +282,7 @@ Example:
     last_error = None
     try:
         uploaded_audio = client.files.upload(file=audio_path)
-        for model_name in ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+        for model_name in ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"]:
             try:
                 response = client.models.generate_content(model=model_name, contents=[prompt, uploaded_audio])
                 raw_text = (getattr(response, "text", None) or "").strip()
