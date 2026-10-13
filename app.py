@@ -281,7 +281,8 @@ Example Format:
 00:00:03,600 --> 00:00:05,200
 (man) បាទ ខ្ញុំសុខសប្បាយទេ។
 """
-    candidate_models = ["gemini-3.7-flash", "gemini-3.7-pro"]
+        candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+
     last_error = None
 
     for m_name in candidate_models:
